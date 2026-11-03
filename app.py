@@ -60,7 +60,8 @@ if st.button("Snipe Prijzen", type="primary"):
                     for item in shopping_results:
                         merchant = str(item.get("source", "Onbekende winkel")).lower()
                         price_str = str(item.get("price", "999999"))
-                        link = item.get("link")
+                        # Vang alle mogelijke link-sleutels af
+                        link = item.get("link") or item.get("product_link") or item.get("direct_link")
                         title = item.get("title", "Onbekend product")
                         
                         item_identifier = (merchant, price_str, title)
@@ -122,7 +123,7 @@ if st.button("Snipe Prijzen", type="primary"):
                                     for seller in sellers:
                                         merchant = str(seller.get("name") or seller.get("source") or "Onbekende winkel").lower()
                                         price_str = str(seller.get("base_price") or seller.get("price") or "999999")
-                                        link = seller.get("link")
+                                        link = seller.get("link") or seller.get("direct_link") or seller.get("offer_page_link")
                                         
                                         item_id = (merchant, price_str, base_title)
                                         if item_id in seen_items:
@@ -156,28 +157,4 @@ if st.button("Snipe Prijzen", type="primary"):
                                             "Product": base_title,
                                             "Price_Text": price_str,
                                             "Total_Val": total_cost,
-                                            "Details": f"Product: € {numeric_price:.2f} + Verzending: {shipping_text}",
-                                            "Link": link
-                                        })
-                            except:
-                                pass
-            except Exception as e:
-                st.error(f"Fout bij ophalen: {e}")
-                
-            comparison_results = sorted(comparison_results, key=lambda x: x["Total_Val"])
-            
-            if comparison_results:
-                st.success(f"Gevonden deals voor: *{search_query}* ({len(comparison_results)} totaal)")
-                
-                for item in comparison_results:
-                    with st.container():
-                        st.markdown(f"### 🛒 {item['Store'].upper()} — Totaal: € {item['Total_Val']:.2f}".replace(".", ","))
-                        st.write(f"**{item['Product']}**")
-                        st.write(f"*{item['Details']}*")
-                        
-                        if item['Link']:
-                            st.markdown(f"[{item['Store'].upper()} Bezoeken]({item['Link']})")
-                            
-                        st.divider()
-            else:
-                st.info("Geen resultaten gevonden.")
+                                            "
