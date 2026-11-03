@@ -101,7 +101,7 @@ if st.button("Snipe Prijzen", type="primary"):
                             })
                             
                     # 2. Check of er sub-producten / extra aanbieders via de product_id API opgehaald moeten worden
-                    for item in shopping_results[:2]: # Check de top 2 producten die meerdere bronnen hebben
+                    for item in shopping_results[:2]:
                         product_id = item.get("product_id")
                         if product_id and item.get("multiple_sources"):
                             sub_params = {
@@ -114,7 +114,7 @@ if st.button("Snipe Prijzen", type="primary"):
                             sub_res = requests.get("https://serpapi.com/search", params=sub_params, timeout=5)
                             if sub_res.status_code == 200:
                                 sub_data = sub_res.json()
-                                sellers = sub_data.get("sellers_results", []).get("online_sellers", [])
+                                sellers = sub_data.get("sellers_results", {}).get("online_sellers", [])
                                 for seller in sellers:
                                     merchant = str(seller.get("name", "Onbekende winkel")).lower()
                                     price_str = str(seller.get("base_price", "999999"))
@@ -148,4 +148,29 @@ if st.button("Snipe Prijzen", type="primary"):
                                             
                                     total_cost = numeric_price + shipping_cost
                                     
-                                    comparison_
+                                    comparison_results.append({
+                                        "Store": merchant,
+                                        "Product": title,
+                                        "Price_Text": price_str,
+                                        "Total_Val": total_cost,
+                                        "Details": f"Product: € {numeric_price:.2f} + Verzending: {shipping_text}",
+                                        "Link": link
+                                    })
+            except Exception as e:
+                st.error(f"Fout bij ophalen: {e}")
+                
+            comparison_results = sorted(comparison_results, key=lambda x: x["Total_Val"])
+            
+            if comparison_results:
+                st.success(f"Volledige markt analyse voor: *{search_query}* ({len(comparison_results)} aanbieders gevonden)")
+                
+                for item in comparison_results:
+                    with st.container():
+                        st.markdown(f"### 🛒 {item['Store'].upper()} — Totaal: € {item['Total_Val']:.2f}".replace(".", ","))
+                        st.write(f"**{item['Product']}**")
+                        st.write(f"*{item['Details']}*")
+                        if item['Link']:
+                            st.markdown(f"[Direct naar winkel]({item['Link']})")
+                        st.divider()
+            else:
+                st.info("Geen resultaten gevonden.")
