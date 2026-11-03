@@ -32,23 +32,27 @@ def extract_query_from_url(url):
         return " ".join(cleaned_words[:5])
     return "product"
 
-def extract_volume_ml(text, extensions=None, fallback_query=""):
-    """Extraheert volume uit titel, Google Shopping extensions of de zoekterm."""
-    combined_text = str(text)
+def extract_volume_ml(title, extensions=None, snippet="", link="", fallback_query=""):
+    """Slimme multi-bron parser: scant titel, snippets, extensions en URL op volume en multipacks."""
+    
+    # Bouw één grote brok tekst van alle beschikbare databronnen
+    combined_parts = [
+        str(title),
+        str(snippet),
+        str(link),
+        str(fallback_query)
+    ]
     if extensions:
         if isinstance(extensions, list):
-            combined_text += " " + " ".join(str(e) for e in extensions)
+            combined_parts.extend(str(e) for e in extensions)
         else:
-            combined_text += " " + str(extensions)
-    if fallback_query:
-        combined_text += " " + str(fallback_query)
-        
-    text_lower = combined_text.lower()
+            combined_parts.append(str(extensions))
+            
+    text_lower = " ".join(combined_parts).lower()
     
-    # Check voor multi-packs zoals "3 x 400ml", "3x400 ml" of "3 stuks"
+    # 1. Zoek naar expliciete vermenigvuldigingen zoals "3 x 400ml", "3x400 ml", "3 stuks 400 ml"
     multi_match = re.search(r'(\d+)\s*(?:[xXstuks]+\s*)*(\d+)\s*(ml|l)', text_lower)
     if multi_match:
-        # Als er een expliciete vermenigvuldiging in staat
         ex_match = re.search(r'(\d+)\s*[xX]\s*(\d+)\s*(ml|l)', text_lower)
         if ex_match:
             count = int(ex_match.group(1))
@@ -57,8 +61,18 @@ def extract_volume_ml(text, extensions=None, fallback_query=""):
             if unit == 'l':
                 amount *= 1000
             return count * amount
+            
+        # Alternatieve detectie voor "3 stuks van 400ml"
+        stuks_match = re.search(r'(\d+)\s*stuks.*?(\d+)\s*(ml|l)', text_lower)
+        if stuks_match:
+            count = int(stuks_match.group(1))
+            amount = float(stuks_match.group(2))
+            unit = stuks_match.group(3)
+            if unit == 'l':
+                amount *= 1000
+            return count * amount
 
-    # Check voor losse volumes zoals "1.2 l", "1200ml", "400 ml"
+    # 2. Zoek naar losse volumes zoals "1.2 l", "1200ml", "400 ml"
     match = re.search(r'(\d+(?:[.,]\d+)?)\s*(ml|l)', text_lower)
     if match:
         val = float(match.group(1).replace(',', '.'))
@@ -76,7 +90,7 @@ if st.button("Snipe Prijzen", type="primary"):
     if not product_url or not serp_key:
         st.warning("Vul zowel een product-URL als je SerpApi Key in!")
     else:
-        with st.spinner("Markt en volume-eenheden aan het berekenen..."):
+        with st.spinner("Slimme markt- en volume-analyse bezig..."):
             
             params = {
                 "engine": "google_shopping",
@@ -100,6 +114,7 @@ if st.button("Snipe Prijzen", type="primary"):
                         price_str = str(item.get("price", "999999"))
                         link = item.get("link") or item.get("product_link") or item.get("direct_link")
                         title = item.get("title", "Onbekend product")
+                        snippet = item.get("snippet", "")
                         extensions = item.get("extensions", [])
                         
                         item_identifier = (merchant, price_str, title)
@@ -128,8 +143,8 @@ if st.button("Snipe Prijzen", type="primary"):
                                     
                             total_cost = numeric_price + shipping_cost
                             
-                            # Volume detectie met extensions en zoektermen als backup
-                            total_ml = extract_volume_ml(title, extensions, search_query)
+                            # Voer de slimme multi-bron volume scan uit
+                            total_ml = extract_volume_ml(title, extensions, snippet, link, search_query)
                             if total_ml and total_ml > 0:
                                 price_per_100ml = (total_cost / total_ml) * 100
                                 unit_details = f"Volume: {int(total_ml)} ml | Prijs per 100 ml: € {price_per_100ml:.2f}"
@@ -173,6 +188,7 @@ if st.button("Snipe Prijzen", type="primary"):
                                         price_str = str(seller.get("base_price") or seller.get("price") or "999999")
                                         link = seller.get("link") or seller.get("direct_link") or seller.get("offer_page_link")
                                         seller_extensions = seller.get("extensions", [])
+                                        seller_snippet = seller.get("snippet", "")
                                         
                                         item_id = (merchant, price_str, base_title)
                                         if item_id in seen_items:
@@ -201,7 +217,7 @@ if st.button("Snipe Prijzen", type="primary"):
                                                 
                                         total_cost = numeric_price + shipping_cost
                                         
-                                        total_ml = extract_volume_ml(base_title, seller_extensions, search_query)
+                                        total_ml = extract_volume_ml(base_title, seller_extensions, seller_snippet, link, search_query)
                                         if total_ml and total_ml > 0:
                                             price_per_100ml = (total_cost / total_ml) * 100
                                             unit_details = f"Volume: {int(total_ml)} ml | Prijs per 100 ml: € {price_per_100ml:.2f}"
@@ -223,7 +239,6 @@ if st.button("Snipe Prijzen", type="primary"):
             except Exception as e:
                 st.error(f"Fout bij ophalen: {e}")
                 
-            # Sorteer op prijs per 100ml (laagste eerst), onbekend volume onderaan
             comparison_results = sorted(comparison_results, key=lambda x: (x["Price_Per_100ml"] if x["Price_Per_100ml"] < 999999 else x["Total_Val"]))
             
             if comparison_results:
