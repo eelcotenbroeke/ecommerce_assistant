@@ -107,7 +107,7 @@ if st.button("Snipe Prijzen", type="primary"):
                         st.write(f"**{item['Product']}**")
                         st.write(f"*{item['Details']}*")
                         if item['Link']:
-                            st.markdown(f"[Direct naar winkel]({item['Link'])")
+                            st.markdown(f"[Direct naar winkel]({item['Link']})")
                         st.divider()
             else:
                 st.info("Geen resultaten gevonden.")
