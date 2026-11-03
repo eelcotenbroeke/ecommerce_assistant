@@ -1,48 +1,66 @@
 import streamlit as st
 import requests
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 # Pagina configuratie
-st.set_page_config(page_title="Price Sniper", page_icon="🎯", layout="centered")
+st.set_page_config(page_title="Price Sniper App", page_icon="🎯", layout="centered")
 
-st.title("🎯 E-Commerce Price Sniper")
-st.write("Plak je product-URL van Bol.com of Amazon.nl om direct de scherpste deal te vinden.")
+st.title("🎯 Universele E-Commerce Price Sniper")
+st.write("Plak een product-URL van Bol, Amazon, Coolblue, MediaMarkt, Etos, Kruidvat of Gamma om de scherpste deal te vinden.")
 
 # Invoervelden
-product_url = st.text_input("Product URL:", placeholder="Plak hier je Bol.com of Amazon.nl URL...")
+product_url = st.text_input("Product URL:", placeholder="Plak hier de product-URL van je favoriete winkel...")
 serp_key = st.text_input("SerpApi Key:", type="password", placeholder="Jouw SerpApi Key")
+
+# Functie om universeel zoektermen uit willekeurige winkel-URL's te halen
+def extract_query_from_url(url):
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
+    query_params = parse_qs(parsed.query)
+    
+    # 1. Check voor bekende zoekparameters in de URL (zoals bij Amazon of webshops met ?q= of ?search=)
+    for param in ['q', 'search', 'query', 'keyword', 'keywords']:
+        if param in query_params:
+            return unquote(query_params[param][0]).replace("+", " ")
+            
+    # 2. Haal nuttige woorden uit het webadres (path) voor winkels zoals Bol, Coolblue, MediaMarkt, etc.
+    path_parts = parsed.path.lower().split('/')
+    cleaned_words = []
+    
+    # Woorden/stukjes die we willen negeren omdat ze geen productnaam zijn
+    ignore_list = ['p', 'product', 'dp', 'nl', 'en', 'ref', 'item', 'g', 'c', 'f']
+    
+    for part in path_parts:
+        if not part or part.isdigit() or len(part) <= 2:
+            continue
+        # Soms staat een producttitel met streepjes ertussen (bijv. "de-dappere-ridder")
+        sub_parts = part.replace('_', '-').split('-')
+        for sub in sub_parts:
+            if sub and sub not in ignore_list and not sub.startswith('b0') and not sub.isdigit():
+                cleaned_words.append(sub)
+                
+    if cleaned_words:
+        # Neem de eerste relevante woorden uit de URL (maximaal 4 à 5 voor een zuivere zoekopdracht)
+        return " ".join(cleaned_words[:5])
+        
+    return "product"
+
+# Bepaal slim de zoekterm als er een URL is ingevoerd
+default_query = extract_query_from_url(product_url) if product_url else ""
+
+# Geef de gebruiker de optie om de afgeleide zoekterm eventueel aan te passen
+search_query = st.text_input("Afgeleide zoekterm (eventueel handmatig aan te passen):", value=default_query)
 
 if st.button("Snipe Prijzen", type="primary"):
     if not product_url or not serp_key:
         st.warning("Vul zowel een product-URL als je SerpApi Key in!")
     else:
         with st.spinner("Markt aan het afstruinen..."):
-            parsed = urlparse(product_url)
-            domain = parsed.netloc.lower()
-            query_params = parse_qs(parsed.query)
             
-            # Zoektermen afleiden
-            if "amazon" in domain:
-                if 'keywords' in query_params:
-                    keywords = query_params['keywords'][0].split()
-                else:
-                    keywords = ["product"]
-            else:
-                if 'q' in query_params:
-                    keywords = query_params['q'][0].split()
-                else:
-                    path_parts = parsed.path.lower().split('/')
-                    for part in path_parts:
-                        if len(part) > 10 and not part.isdigit():
-                            keywords = part.replace('-', ' ').split()[:4]
-                            break
-            
-            query = " ".join(keywords) if keywords else "product"
-            
-            # SerpApi aanroepen
+            # SerpApi aanroepen met de scherpe zoekterm
             params = {
                 "engine": "google_shopping",
-                "q": query,
+                "q": search_query,
                 "hl": "nl",
                 "gl": "nl",
                 "api_key": serp_key
@@ -99,7 +117,7 @@ if st.button("Snipe Prijzen", type="primary"):
             comparison_results = sorted(comparison_results, key=lambda x: x["Total_Val"])
             
             if comparison_results:
-                st.success(f"Gevonden zoekterm: *{query}*")
+                st.success(f"Actieve zoekterm: *{search_query}*")
                 
                 for item in comparison_results:
                     with st.container():
