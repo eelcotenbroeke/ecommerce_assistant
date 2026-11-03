@@ -6,7 +6,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 st.set_page_config(page_title="Price Sniper App", page_icon="🎯", layout="centered")
 
 st.title("🎯 Universele E-Commerce Price Sniper")
-st.write("Plak een product-URL of voer handmatig een zoekterm in om alle deals te snipen.")
+st.write("Plak een product-URL of voer handmatig een zoekterm in om alle deals en ads te snipen.")
 
 # Invoervelden
 product_url = st.text_input("Product URL:", placeholder="Plak hier de product-URL...")
@@ -38,12 +38,15 @@ if st.button("Snipe Prijzen", type="primary"):
     if not product_url or not serp_key:
         st.warning("Vul zowel een product-URL als je SerpApi Key in!")
     else:
-        with st.spinner("Markt grondig aan het doorzoeken (inclusief ads)..."):
+        with st.spinner("Google hoofdmotor aan het bevragen voor alle ads en deals..."):
+            
+            # GEBRUIK ENGINE="google" ipv google_shopping om de echte Google-ads en carrousels te vangen
             params = {
-                "engine": "google_shopping",
+                "engine": "google",
                 "q": search_query,
                 "hl": "nl",
                 "gl": "nl",
+                "tbm": "shop",
                 "api_key": serp_key
             }
             
@@ -54,13 +57,12 @@ if st.button("Snipe Prijzen", type="primary"):
                 if res.status_code == 200:
                     data = res.json()
                     
-                    # Vang alle mogelijke SerpApi sleutels af
+                    # Vang alle mogelijke Google Search / Shopping resultaten inclusief ads
                     shopping_results = data.get("shopping_results", [])
                     inline_results = data.get("inline_shopping_results", [])
-                    ads_results = data.get("ads_results", []) or data.get("ads", [])
-                    product_results = data.get("product_results", [])
+                    ads_results = data.get("ads", []) or data.get("ads_results", [])
                     
-                    all_items = shopping_results + inline_results + ads_results + product_results
+                    all_items = shopping_results + inline_results + ads_results
                     
                     seen_items = set()
                     
@@ -114,7 +116,7 @@ if st.button("Snipe Prijzen", type="primary"):
             comparison_results = sorted(comparison_results, key=lambda x: x["Total_Val"])
             
             if comparison_results:
-                st.success(f"Gevonden deals voor: *{search_query}* ({len(comparison_results)} totaal)")
+                st.success(f"Gevonden deals met ads voor: *{search_query}* ({len(comparison_results)} totaal)")
                 
                 for item in comparison_results:
                     with st.container():
@@ -125,4 +127,4 @@ if st.button("Snipe Prijzen", type="primary"):
                             st.markdown(f"[Direct naar winkel]({item['Link']})")
                         st.divider()
             else:
-                st.info("Geen resultaten gevonden. Controleer de zoekterm.")
+                st.info("Geen resultaten gevonden.")
