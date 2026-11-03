@@ -6,58 +6,47 @@ from urllib.parse import urlparse, parse_qs, unquote
 st.set_page_config(page_title="Price Sniper App", page_icon="🎯", layout="centered")
 
 st.title("🎯 Universele E-Commerce Price Sniper")
-st.write("Plak een product-URL van Bol, Amazon, Coolblue, MediaMarkt, Etos, Kruidvat of Gamma om de scherpste deal te vinden.")
+st.write("Plak een product-URL of voer handmatig een zoekterm in om alle deals (inclusief gesponsord) te snipen.")
 
 # Invoervelden
-product_url = st.text_input("Product URL:", placeholder="Plak hier de product-URL van je favoriete winkel...")
+product_url = st.text_input("Product URL:", placeholder="Plak hier de product-URL...")
 serp_key = st.text_input("SerpApi Key:", type="password", placeholder="Jouw SerpApi Key")
 
-# Functie om universeel zoektermen uit willekeurige winkel-URL's te halen
+# Functie om universeel zoektermen uit URL's te halen
 def extract_query_from_url(url):
     parsed = urlparse(url)
-    domain = parsed.netloc.lower()
     query_params = parse_qs(parsed.query)
     
-    # 1. Check voor bekende zoekparameters in de URL (zoals bij Amazon of webshops met ?q= of ?search=)
     for param in ['q', 'search', 'query', 'keyword', 'keywords']:
         if param in query_params:
             return unquote(query_params[param][0]).replace("+", " ")
             
-    # 2. Haal nuttige woorden uit het webadres (path) voor winkels zoals Bol, Coolblue, MediaMarkt, etc.
     path_parts = parsed.path.lower().split('/')
     cleaned_words = []
-    
-    # Woorden/stukjes die we willen negeren omdat ze geen productnaam zijn
     ignore_list = ['p', 'product', 'dp', 'nl', 'en', 'ref', 'item', 'g', 'c', 'f']
     
     for part in path_parts:
         if not part or part.isdigit() or len(part) <= 2:
             continue
-        # Soms staat een producttitel met streepjes ertussen (bijv. "de-dappere-ridder")
         sub_parts = part.replace('_', '-').split('-')
         for sub in sub_parts:
             if sub and sub not in ignore_list and not sub.startswith('b0') and not sub.isdigit():
                 cleaned_words.append(sub)
                 
     if cleaned_words:
-        # Neem de eerste relevante woorden uit de URL (maximaal 4 à 5 voor een zuivere zoekopdracht)
         return " ".join(cleaned_words[:5])
         
     return "product"
 
-# Bepaal slim de zoekterm als er een URL is ingevoerd
 default_query = extract_query_from_url(product_url) if product_url else ""
-
-# Geef de gebruiker de optie om de afgeleide zoekterm eventueel aan te passen
-search_query = st.text_input("Afgeleide zoekterm (eventueel handmatig aan te passen):", value=default_query)
+search_query = st.text_input("Actieve zoekterm:", value=default_query)
 
 if st.button("Snipe Prijzen", type="primary"):
     if not product_url or not serp_key:
         st.warning("Vul zowel een product-URL als je SerpApi Key in!")
     else:
-        with st.spinner("Markt aan het afstruinen..."):
+        with st.spinner("Markt inclusief advertenties aan het afstruinen..."):
             
-            # SerpApi aanroepen met de scherpe zoekterm
             params = {
                 "engine": "google_shopping",
                 "q": search_query,
@@ -72,13 +61,27 @@ if st.button("Snipe Prijzen", type="primary"):
                 res = requests.get("https://serpapi.com/search", params=params, timeout=8)
                 if res.status_code == 200:
                     data = res.json()
-                    shopping_results = data.get("shopping_results", [])
                     
-                    for item in shopping_results:
+                    # COMBINEER organische resultaten, inline/gesponsorde blokken én advertenties
+                    shopping_results = data.get("shopping_results", [])
+                    inline_results = data.get("inline_shopping_results", [])
+                    ads_results = data.get("ads_results", [])
+                    
+                    all_items = shopping_results + inline_results + ads_results
+                    
+                    seen_items = set()
+                    
+                    for item in all_items:
                         merchant = item.get("source", "Onbekende winkel").lower()
                         price_str = item.get("price", "999999")
                         link = item.get("link")
                         title = item.get("title")
+                        
+                        # Voorkom dubbele vermeldingen in de lijst
+                        item_identifier = (merchant, price_str, title)
+                        if item_identifier in seen_items:
+                            continue
+                        seen_items.add(item_identifier)
                         
                         try:
                             numeric_price = float(price_str.replace("€", "").replace(".", "").replace(",", ".").strip())
@@ -117,7 +120,7 @@ if st.button("Snipe Prijzen", type="primary"):
             comparison_results = sorted(comparison_results, key=lambda x: x["Total_Val"])
             
             if comparison_results:
-                st.success(f"Actieve zoekterm: *{search_query}*")
+                st.success(f"Gevonden deals voor: *{search_query}* (Inclusief Gesponsord)")
                 
                 for item in comparison_results:
                     with st.container():
