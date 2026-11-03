@@ -1,12 +1,13 @@
 import streamlit as st
 import requests
+import re
 from urllib.parse import urlparse, parse_qs, unquote
 
 # Pagina configuratie
 st.set_page_config(page_title="Price Sniper App", page_icon="🎯", layout="centered")
 
 st.title("🎯 Universele E-Commerce Price Sniper")
-st.write("Plak een product-URL om alle aanbieders en deals te snipen.")
+st.write("Plak een product-URL om op prijs per ml en totalen te snipen.")
 
 # Invoervelden
 product_url = st.text_input("Product URL:", placeholder="Plak hier de product-URL...")
@@ -31,6 +32,31 @@ def extract_query_from_url(url):
         return " ".join(cleaned_words[:5])
     return "product"
 
+def extract_volume_ml(text):
+    """Probeert het totale volume in milliliters te detecteren uit de producttitel of beschrijving."""
+    text_lower = text.lower()
+    
+    # Check voor patronen zoals "3 x 400ml", "3x400 ml"
+    multi_match = re.search(r'(\d+)\s*[xX]\s*(\d+)\s*(ml|l)', text_lower)
+    if multi_match:
+        count = int(multi_match.group(1))
+        amount = float(multi_match.group(2))
+        unit = multi_match.group(3)
+        if unit == 'l':
+            amount *= 1000
+        return count * amount
+
+    # Check voor losse volumes zoals "1.2 l", "1200ml", "400 ml"
+    match = re.search(r'(\d+(?:[.,]\d+)?)\s*(ml|l)', text_lower)
+    if match:
+        val = float(match.group(1).replace(',', '.'))
+        unit = match.group(2)
+        if unit == 'l':
+            return val * 1000
+        return val
+        
+    return None
+
 default_query = extract_query_from_url(product_url) if product_url else ""
 search_query = st.text_input("Actieve zoekterm:", value=default_query)
 
@@ -38,7 +64,7 @@ if st.button("Snipe Prijzen", type="primary"):
     if not product_url or not serp_key:
         st.warning("Vul zowel een product-URL als je SerpApi Key in!")
     else:
-        with st.spinner("Markt aan het afstruinen..."):
+        with st.spinner("Markt en eenheidsprijzen aan het berekenen..."):
             
             params = {
                 "engine": "google_shopping",
@@ -89,12 +115,22 @@ if st.button("Snipe Prijzen", type="primary"):
                                     
                             total_cost = numeric_price + shipping_cost
                             
+                            # Volume en prijs per 100ml berekenen
+                            total_ml = extract_volume_ml(title)
+                            if total_ml and total_ml > 0:
+                                price_per_100ml = (total_cost / total_ml) * 100
+                                unit_details = f"Volume: {int(total_ml)} ml | Prijs per 100 ml: € {price_per_100ml:.2f}"
+                            else:
+                                price_per_100ml = 999999.0 # Onbekend volume komt onderaan
+                                unit_details = "Volume onbekend (gesorteerd op totaal)"
+                                    
                             comparison_results.append({
                                 "Store": merchant,
                                 "Product": title,
                                 "Price_Text": price_str,
                                 "Total_Val": total_cost,
-                                "Details": f"Product: € {numeric_price:.2f} + Verzending: {shipping_text}",
+                                "Price_Per_100ml": price_per_100ml,
+                                "Details": f"Product: € {numeric_price:.2f} + Verzending: {shipping_text} \n\n*{unit_details}*",
                                 "Link": link
                             })
                             
@@ -151,12 +187,21 @@ if st.button("Snipe Prijzen", type="primary"):
                                                 
                                         total_cost = numeric_price + shipping_cost
                                         
+                                        total_ml = extract_volume_ml(base_title)
+                                        if total_ml and total_ml > 0:
+                                            price_per_100ml = (total_cost / total_ml) * 100
+                                            unit_details = f"Volume: {int(total_ml)} ml | Prijs per 100 ml: € {price_per_100ml:.2f}"
+                                        else:
+                                            price_per_100ml = 999999.0
+                                            unit_details = "Volume onbekend"
+                                                
                                         comparison_results.append({
                                             "Store": merchant,
                                             "Product": base_title,
                                             "Price_Text": price_str,
                                             "Total_Val": total_cost,
-                                            "Details": f"Product: € {numeric_price:.2f} + Verzending: {shipping_text}",
+                                            "Price_Per_100ml": price_per_100ml,
+                                            "Details": f"Product: € {numeric_price:.2f} + Verzending: {shipping_text} \n\n*{unit_details}*",
                                             "Link": link
                                         })
                             except:
@@ -164,10 +209,11 @@ if st.button("Snipe Prijzen", type="primary"):
             except Exception as e:
                 st.error(f"Fout bij ophalen: {e}")
                 
-            comparison_results = sorted(comparison_results, key=lambda x: x["Total_Val"])
+            # Sorteer primair op de goedkoopste prijs per 100ml (als bekend), anders op totaalprijs
+            comparison_results = sorted(comparison_results, key=lambda x: (x["Price_Per_100ml"] if x["Price_Per_100ml"] < 999999 else x["Total_Val"]))
             
             if comparison_results:
-                msg = f"Gevonden deals voor: {search_query} ({len(comparison_results)} totaal)"
+                msg = f"Gevonden deals voor: {search_query} ({len(comparison_results)} totaal, gesorteerd op prijs per ml)"
                 st.success(msg)
                 
                 for item in comparison_results:
@@ -175,7 +221,7 @@ if st.button("Snipe Prijzen", type="primary"):
                         header_text = f"🛒 {item['Store'].upper()} — Totaal: € {item['Total_Val']:.2f}"
                         st.markdown(header_text.replace(".", ","))
                         st.write(f"**{item['Product']}**")
-                        st.write(f"*{item['Details']}*")
+                        st.markdown(item['Details'].replace(".", ","))
                         
                         if item['Link']:
                             st.link_button(f"🔗 {item['Store'].upper()} Bezoeken", item['Link'])
