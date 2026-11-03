@@ -167,10 +167,21 @@ if st.button("Snipe Prijzen", type="primary"):
             comparison_results = sorted(comparison_results, key=lambda x: x["Total_Val"])
             
             if comparison_results:
-                st.success(f"Gevonden deals voor: *{search_query}* ({len(comparison_results)} totaal)")
+                msg = f"Gevonden deals voor: {search_query} ({len(comparison_results)} totaal)"
+                st.success(msg)
                 
                 for item in comparison_results:
                     with st.container():
-                        st.markdown(f"### 🛒 {item['Store'].upper()} — Totaal: € {item['Total_Val']:.2f}".replace(".", ","))
+                        header_text = f"🛒 {item['Store'].upper()} — Totaal: € {item['Total_Val']:.2f}"
+                        st.markdown(header_text.replace(".", ","))
                         st.write(f"**{item['Product']}**")
-                        st.write(
+                        st.write(f"*{item['Details']}*")
+                        
+                        if item['Link']:
+                            st.markdown(f"[{item['Store'].upper()} Bezoeken]({item['Link']})")
+                        else:
+                            st.markdown("*Geen directe URL beschikbaar*")
+                            
+                        st.divider()
+            else:
+                st.info("Geen resultaten gevonden.")
