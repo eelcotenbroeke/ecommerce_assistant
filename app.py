@@ -60,7 +60,6 @@ if st.button("Snipe Prijzen", type="primary"):
                     for item in shopping_results:
                         merchant = str(item.get("source", "Onbekende winkel")).lower()
                         price_str = str(item.get("price", "999999"))
-                        # Vang alle mogelijke link-sleutels af
                         link = item.get("link") or item.get("product_link") or item.get("direct_link")
                         title = item.get("title", "Onbekend product")
                         
@@ -157,4 +156,21 @@ if st.button("Snipe Prijzen", type="primary"):
                                             "Product": base_title,
                                             "Price_Text": price_str,
                                             "Total_Val": total_cost,
-                                            "
+                                            "Details": f"Product: € {numeric_price:.2f} + Verzending: {shipping_text}",
+                                            "Link": link
+                                        })
+                            except:
+                                pass
+            except Exception as e:
+                st.error(f"Fout bij ophalen: {e}")
+                
+            comparison_results = sorted(comparison_results, key=lambda x: x["Total_Val"])
+            
+            if comparison_results:
+                st.success(f"Gevonden deals voor: *{search_query}* ({len(comparison_results)} totaal)")
+                
+                for item in comparison_results:
+                    with st.container():
+                        st.markdown(f"### 🛒 {item['Store'].upper()} — Totaal: € {item['Total_Val']:.2f}".replace(".", ","))
+                        st.write(f"**{item['Product']}**")
+                        st.write(
