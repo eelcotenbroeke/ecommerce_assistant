@@ -6,7 +6,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 st.set_page_config(page_title="Price Sniper App", page_icon="🎯", layout="centered")
 
 st.title("🎯 Universele E-Commerce Price Sniper")
-st.write("Plak een product-URL of voer handmatig een zoekterm in om alle deals en ads te snipen.")
+st.write("Plak een product-URL of voer handmatig een zoekterm in om de markt te analyseren.")
 
 # Invoervelden
 product_url = st.text_input("Product URL:", placeholder="Plak hier de product-URL...")
@@ -38,9 +38,8 @@ if st.button("Snipe Prijzen", type="primary"):
     if not product_url or not serp_key:
         st.warning("Vul zowel een product-URL als je SerpApi Key in!")
     else:
-        with st.spinner("Google hoofdmotor aan het bevragen voor alle ads en deals..."):
+        with st.spinner("Data ophalen en analyseren..."):
             
-            # GEBRUIK ENGINE="google" ipv google_shopping om de echte Google-ads en carrousels te vangen
             params = {
                 "engine": "google",
                 "q": search_query,
@@ -51,13 +50,14 @@ if st.button("Snipe Prijzen", type="primary"):
             }
             
             comparison_results = []
+            raw_data = {}
             
             try:
                 res = requests.get("https://serpapi.com/search", params=params, timeout=8)
                 if res.status_code == 200:
                     data = res.json()
+                    raw_data = data # Bewaar voor debug
                     
-                    # Vang alle mogelijke Google Search / Shopping resultaten inclusief ads
                     shopping_results = data.get("shopping_results", [])
                     inline_results = data.get("inline_shopping_results", [])
                     ads_results = data.get("ads", []) or data.get("ads_results", [])
@@ -116,7 +116,7 @@ if st.button("Snipe Prijzen", type="primary"):
             comparison_results = sorted(comparison_results, key=lambda x: x["Total_Val"])
             
             if comparison_results:
-                st.success(f"Gevonden deals met ads voor: *{search_query}* ({len(comparison_results)} totaal)")
+                st.success(f"Gevonden deals voor: *{search_query}* ({len(comparison_results)} totaal)")
                 
                 for item in comparison_results:
                     with st.container():
@@ -128,3 +128,7 @@ if st.button("Snipe Prijzen", type="primary"):
                         st.divider()
             else:
                 st.info("Geen resultaten gevonden.")
+                
+            # --- DEBUG SECTIE ---
+            with st.expander("🛠️ Debug: Ruwe SerpApi JSON Respons"):
+                st.json(raw_data)
