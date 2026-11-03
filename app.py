@@ -178,9 +178,9 @@ if st.button("Snipe Prijzen", type="primary"):
                         st.write(f"*{item['Details']}*")
                         
                         if item['Link']:
-                            st.markdown(f"[{item['Store'].upper()} Bezoeken]({item['Link']})")
+                            st.link_button(f"🔗 {item['Store'].upper()} Bezoeken", item['Link'])
                         else:
-                            st.markdown("*Geen directe URL beschikbaar*")
+                            st.caption("Geen directe URL beschikbaar")
                             
                         st.divider()
             else:
