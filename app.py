@@ -6,7 +6,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 st.set_page_config(page_title="Price Sniper App", page_icon="🎯", layout="centered")
 
 st.title("🎯 Universele E-Commerce Price Sniper")
-st.write("Plak een product-URL of voer handmatig een zoekterm in om de markt te snipen.")
+st.write("Plak een product-URL om alle sub-aanbieders en tweedehands deals te snipen.")
 
 # Invoervelden
 product_url = st.text_input("Product URL:", placeholder="Plak hier de product-URL...")
@@ -38,7 +38,7 @@ if st.button("Snipe Prijzen", type="primary"):
     if not product_url or not serp_key:
         st.warning("Vul zowel een product-URL als je SerpApi Key in!")
     else:
-        with st.spinner("Markt aan het afstruinen..."):
+        with st.spinner("Alle aanbieders en sub-winkels aan het ophalen..."):
             
             params = {
                 "engine": "google_shopping",
@@ -57,7 +57,7 @@ if st.button("Snipe Prijzen", type="primary"):
                     data = res.json()
                     shopping_results = data.get("shopping_results", [])
                     
-                    # 1. Altijd eerst de standaard shopping resultaten vangen (werkt altijd)
+                    # 1. Basisresultaten toevoegen
                     for item in shopping_results:
                         merchant = str(item.get("source", "Onbekende winkel")).lower()
                         price_str = str(item.get("price", "999999"))
@@ -69,111 +69,4 @@ if st.button("Snipe Prijzen", type="primary"):
                             seen_items.add(item_identifier)
                             
                             try:
-                                clean_price = price_str.replace("€", "").replace(".", "").replace(",", ".").strip()
-                                numeric_price = float(clean_price)
-                            except:
-                                numeric_price = 999999.0
-                                
-                            if "bol.com" in merchant:
-                                shipping_cost = 0.0
-                                shipping_text = "€ 0,00 (Bol Select Voordeel)"
-                            elif "amazon" in merchant:
-                                shipping_cost = 0.0
-                                shipping_text = "€ 0,00 (Amazon Prime Voordeel)"
-                            else:
-                                if numeric_price >= 40.0:
-                                    shipping_cost = 0.0
-                                    shipping_text = "€ 0,00 (Gratis verzending > €40)"
-                                else:
-                                    shipping_cost = 5.95
-                                    shipping_text = "Ca. € 5,95"
-                                    
-                            total_cost = numeric_price + shipping_cost
-                            
-                            comparison_results.append({
-                                "Store": merchant,
-                                "Product": title,
-                                "Price_Text": price_str,
-                                "Total_Val": total_cost,
-                                "Details": f"Product: € {numeric_price:.2f} + Verzending: {shipping_text}",
-                                "Link": link
-                            })
-                            
-                    # 2. Probeer daarna extra verkopers op te halen via de Product API mits aanwezig
-                    for item in shopping_results[:2]:
-                        product_id = item.get("product_id")
-                        base_title = item.get("title", "Onbekend product")
-                        
-                        if product_id:
-                            prod_params = {
-                                "engine": "google_product",
-                                "product_id": product_id,
-                                "hl": "nl",
-                                "gl": "nl",
-                                "api_key": serp_key
-                            }
-                            try:
-                                prod_res = requests.get("https://serpapi.com/search", params=prod_params, timeout=5)
-                                if prod_res.status_code == 200:
-                                    prod_data = prod_res.json()
-                                    sellers = prod_data.get("sellers_results", {}).get("online_sellers", [])
-                                    for seller in sellers:
-                                        merchant = str(seller.get("name", "Onbekende winkel")).lower()
-                                        price_str = str(seller.get("base_price", "999999"))
-                                        link = seller.get("link")
-                                        
-                                        item_id = (merchant, price_str, base_title)
-                                        if item_id in seen_items:
-                                            continue
-                                        seen_items.add(item_id)
-                                        
-                                        try:
-                                            clean_price = price_str.replace("€", "").replace(".", "").replace(",", ".").strip()
-                                            numeric_price = float(clean_price)
-                                        except:
-                                            numeric_price = 999999.0
-                                            
-                                        if "bol.com" in merchant:
-                                            shipping_cost = 0.0
-                                            shipping_text = "€ 0,00 (Bol Select Voordeel)"
-                                        elif "amazon" in merchant:
-                                            shipping_cost = 0.0
-                                            shipping_text = "€ 0,00 (Amazon Prime Voordeel)"
-                                        else:
-                                            if numeric_price >= 40.0:
-                                                shipping_cost = 0.0
-                                                shipping_text = "€ 0,00 (Gratis verzending > €40)"
-                                            else:
-                                                shipping_cost = 5.95
-                                                shipping_text = "Ca. € 5,95"
-                                                
-                                        total_cost = numeric_price + shipping_cost
-                                        
-                                        comparison_results.append({
-                                            "Store": merchant,
-                                            "Product": base_title,
-                                            "Price_Text": price_str,
-                                            "Total_Val": total_cost,
-                                            "Details": f"Product: € {numeric_price:.2f} + Verzending: {shipping_text}",
-                                            "Link": link
-                                        })
-                            except:
-                                pass
-            except Exception as e:
-                st.error(f"Fout bij ophalen: {e}")
-                
-            comparison_results = sorted(comparison_results, key=lambda x: x["Total_Val"])
-            
-            if comparison_results:
-                st.success(f"Gevonden deals voor: *{search_query}* ({len(comparison_results)} totaal)")
-                
-                for item in comparison_results:
-                    with st.container():
-                        st.markdown(f"### 🛒 {item['Store'].upper()} — Totaal: € {item['Total_Val']:.2f}".replace(".", ","))
-                        st.write(f"**{item['Product']}**")
-                        st.write(f"*{item['Details']}*")
-                        if item['Link']:
-                            st.markdown(f"[Direct naar winkel]({item['Link']})")
-                        st.divider()
-            else:
-                st.info("Geen resultaten gevonden.")
+                                clean_price =
