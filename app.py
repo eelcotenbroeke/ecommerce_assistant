@@ -32,19 +32,31 @@ def extract_query_from_url(url):
         return " ".join(cleaned_words[:5])
     return "product"
 
-def extract_volume_ml(text):
-    """Probeert het totale volume in milliliters te detecteren uit de producttitel of beschrijving."""
-    text_lower = text.lower()
+def extract_volume_ml(text, extensions=None, fallback_query=""):
+    """Extraheert volume uit titel, Google Shopping extensions of de zoekterm."""
+    combined_text = str(text)
+    if extensions:
+        if isinstance(extensions, list):
+            combined_text += " " + " ".join(str(e) for e in extensions)
+        else:
+            combined_text += " " + str(extensions)
+    if fallback_query:
+        combined_text += " " + str(fallback_query)
+        
+    text_lower = combined_text.lower()
     
-    # Check voor patronen zoals "3 x 400ml", "3x400 ml"
-    multi_match = re.search(r'(\d+)\s*[xX]\s*(\d+)\s*(ml|l)', text_lower)
+    # Check voor multi-packs zoals "3 x 400ml", "3x400 ml" of "3 stuks"
+    multi_match = re.search(r'(\d+)\s*(?:[xXstuks]+\s*)*(\d+)\s*(ml|l)', text_lower)
     if multi_match:
-        count = int(multi_match.group(1))
-        amount = float(multi_match.group(2))
-        unit = multi_match.group(3)
-        if unit == 'l':
-            amount *= 1000
-        return count * amount
+        # Als er een expliciete vermenigvuldiging in staat
+        ex_match = re.search(r'(\d+)\s*[xX]\s*(\d+)\s*(ml|l)', text_lower)
+        if ex_match:
+            count = int(ex_match.group(1))
+            amount = float(ex_match.group(2))
+            unit = ex_match.group(3)
+            if unit == 'l':
+                amount *= 1000
+            return count * amount
 
     # Check voor losse volumes zoals "1.2 l", "1200ml", "400 ml"
     match = re.search(r'(\d+(?:[.,]\d+)?)\s*(ml|l)', text_lower)
@@ -64,7 +76,7 @@ if st.button("Snipe Prijzen", type="primary"):
     if not product_url or not serp_key:
         st.warning("Vul zowel een product-URL als je SerpApi Key in!")
     else:
-        with st.spinner("Markt en eenheidsprijzen aan het berekenen..."):
+        with st.spinner("Markt en volume-eenheden aan het berekenen..."):
             
             params = {
                 "engine": "google_shopping",
@@ -88,6 +100,7 @@ if st.button("Snipe Prijzen", type="primary"):
                         price_str = str(item.get("price", "999999"))
                         link = item.get("link") or item.get("product_link") or item.get("direct_link")
                         title = item.get("title", "Onbekend product")
+                        extensions = item.get("extensions", [])
                         
                         item_identifier = (merchant, price_str, title)
                         if item_identifier not in seen_items:
@@ -115,14 +128,14 @@ if st.button("Snipe Prijzen", type="primary"):
                                     
                             total_cost = numeric_price + shipping_cost
                             
-                            # Volume en prijs per 100ml berekenen
-                            total_ml = extract_volume_ml(title)
+                            # Volume detectie met extensions en zoektermen als backup
+                            total_ml = extract_volume_ml(title, extensions, search_query)
                             if total_ml and total_ml > 0:
                                 price_per_100ml = (total_cost / total_ml) * 100
                                 unit_details = f"Volume: {int(total_ml)} ml | Prijs per 100 ml: € {price_per_100ml:.2f}"
                             else:
-                                price_per_100ml = 999999.0 # Onbekend volume komt onderaan
-                                unit_details = "Volume onbekend (gesorteerd op totaal)"
+                                price_per_100ml = 999999.0
+                                unit_details = "Volume onbekend"
                                     
                             comparison_results.append({
                                 "Store": merchant,
@@ -159,6 +172,7 @@ if st.button("Snipe Prijzen", type="primary"):
                                         merchant = str(seller.get("name") or seller.get("source") or "Onbekende winkel").lower()
                                         price_str = str(seller.get("base_price") or seller.get("price") or "999999")
                                         link = seller.get("link") or seller.get("direct_link") or seller.get("offer_page_link")
+                                        seller_extensions = seller.get("extensions", [])
                                         
                                         item_id = (merchant, price_str, base_title)
                                         if item_id in seen_items:
@@ -187,7 +201,7 @@ if st.button("Snipe Prijzen", type="primary"):
                                                 
                                         total_cost = numeric_price + shipping_cost
                                         
-                                        total_ml = extract_volume_ml(base_title)
+                                        total_ml = extract_volume_ml(base_title, seller_extensions, search_query)
                                         if total_ml and total_ml > 0:
                                             price_per_100ml = (total_cost / total_ml) * 100
                                             unit_details = f"Volume: {int(total_ml)} ml | Prijs per 100 ml: € {price_per_100ml:.2f}"
@@ -209,7 +223,7 @@ if st.button("Snipe Prijzen", type="primary"):
             except Exception as e:
                 st.error(f"Fout bij ophalen: {e}")
                 
-            # Sorteer primair op de goedkoopste prijs per 100ml (als bekend), anders op totaalprijs
+            # Sorteer op prijs per 100ml (laagste eerst), onbekend volume onderaan
             comparison_results = sorted(comparison_results, key=lambda x: (x["Price_Per_100ml"] if x["Price_Per_100ml"] < 999999 else x["Total_Val"]))
             
             if comparison_results:
