@@ -34,6 +34,15 @@ STORE_SEARCH_URLS = {
     "parfumdreams": "https://www.parfumdreams.nl/Vat/Search.aspx?search={q}",
 }
 
+# Vergelijkingssites voor de "Zoek ook op"-links.
+# search_url = None  -> Google site:-zoekopdracht op dat domein (werkt altijd).
+# search_url = "https://.../zoek?q={q}" -> directe zoeklink; {q} wordt de zoekterm.
+COMPARISON_SITES = [
+    {"name": "Beslist.nl", "domain": "beslist.nl", "search_url": None},
+    {"name": "Kieskeurig.nl", "domain": "kieskeurig.nl", "search_url": None},
+    {"name": "Kelkoo.nl", "domain": "kelkoo.nl", "search_url": None},
+]
+
 UNIT_FACTORS = {
     "ml": 1.0,
     "cl": 10.0,
@@ -571,6 +580,25 @@ def render_table(df):
     )
 
 
+def comparison_link(site, query):
+    """Bouw een zoeklink naar een vergelijkingssite (direct of via Google site:)."""
+    template = site.get("search_url")
+    if template:
+        return template.format(q=quote_plus(query))
+    return "https://www.google.com/search?q=" + quote_plus(f"site:{site['domain']} {query}")
+
+
+def render_comparison_links(query):
+    """Toont snelle links om dezelfde zoekterm op Nederlandse vergelijkingssites te openen."""
+    if not query:
+        return
+    parts = []
+    for site in COMPARISON_SITES:
+        url = safe_md_url(comparison_link(site, query))
+        parts.append(f"[{md_escape(site['name'])} \u2197]({url})")
+    st.markdown("**Zoek ook op:** " + " \u00b7 ".join(parts))
+
+
 def render_results(snipe):
     for note in snipe["notes"]:
         st.warning(note)
@@ -578,6 +606,7 @@ def render_results(snipe):
     rows = snipe["rows"]
     if not rows:
         st.warning("Geen bruikbare resultaten gevonden.")
+        render_comparison_links(snipe["query"])
         return
 
     st.subheader(f"Resultaten voor: {snipe['query']}")
@@ -617,6 +646,7 @@ def render_results(snipe):
         "Per liter en per 100 ml zijn berekend over prijs plus (geschatte) verzendkosten. "
         "Bij 'N stuks + volume' in de titel wordt het volume per stuk aangenomen."
     )
+    render_comparison_links(snipe["query"])
 
 
 # ---------------------------------------------------------------------------
