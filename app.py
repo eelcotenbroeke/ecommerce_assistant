@@ -7,7 +7,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 st.set_page_config(page_title="Price Sniper App", page_icon="🎯", layout="centered")
 
 st.title("🎯 Universele E-Commerce Price Sniper")
-st.write("Automatische prijs- en volume-sniper met directe webshop-links.")
+st.write("Automatische prijs- en volume-sniper met werkende winkel-links.")
 
 # Product URL invoer
 product_url = st.text_input("Product URL:", placeholder="Plak hier de product-URL...")
@@ -41,6 +41,13 @@ def extract_query_from_url(url):
     if cleaned_words:
         return " ".join(cleaned_words[:5])
     return "product"
+
+def clean_store_link(raw_link, merchant="", product_title=""):
+    """Vervangt dode Google Shopping tussenpagina's automatisch door een directe zoekopdracht voor de winkel."""
+    if not raw_link or "google.com" in str(raw_link):
+        fallback_query = f"{merchant} {product_title}".strip()
+        return f"https://www.google.com/search?q={requests.utils.quote(fallback_query)}"
+    return raw_link
 
 def extract_volume_ml(text):
     text_lower = str(text).lower()
@@ -80,7 +87,7 @@ if st.button("Snipe Prijzen", type="primary"):
     if not product_url or not serp_key:
         st.warning("Vul een product-URL in (en controleer of je SerpApi Key correct is ingesteld in de Secrets)!")
     else:
-        with st.spinner("Markt aan het doorzoeken en schone links ophalen..."):
+        with st.spinner("Markt aan het doorzoeken..."):
             
             params = {
                 "engine": "google_shopping",
@@ -102,16 +109,11 @@ if st.button("Snipe Prijzen", type="primary"):
                     for item in shopping_results:
                         merchant = str(item.get("source", "Onbekende winkel")).lower()
                         price_str = str(item.get("price", "999999"))
-                        
-                        # Prioriteer directe webshop links als die aanwezig zijn in de API response
-                        link = (
-                            item.get("direct_link") or 
-                            item.get("offer_page_link") or 
-                            item.get("product_link") or 
-                            item.get("link")
-                        )
-                        
                         title = item.get("title", "Onbekend product")
+                        
+                        raw_link = item.get("direct_link") or item.get("offer_page_link") or item.get("product_link") or item.get("link")
+                        link = clean_store_link(raw_link, merchant, title)
+                        
                         snippet = item.get("snippet", "")
                         extensions = " ".join(str(e) for e in item.get("extensions", []))
                         
@@ -184,14 +186,11 @@ if st.button("Snipe Prijzen", type="primary"):
                                     for seller in sellers:
                                         merchant = str(seller.get("name") or seller.get("source") or "Onbekende winkel").lower()
                                         price_str = str(seller.get("base_price") or seller.get("price") or "999999")
-                                        
-                                        link = (
-                                            seller.get("direct_link") or 
-                                            seller.get("offer_page_link") or 
-                                            seller.get("link")
-                                        )
-                                        
                                         seller_title = seller.get("title") or base_title
+                                        
+                                        raw_link = seller.get("direct_link") or seller.get("offer_page_link") or seller.get("link")
+                                        link = clean_store_link(raw_link, merchant, seller_title)
+                                        
                                         seller_snippet = seller.get("snippet", "")
                                         seller_ext = " ".join(str(e) for e in seller.get("extensions", []))
                                         
