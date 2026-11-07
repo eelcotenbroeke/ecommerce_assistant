@@ -128,10 +128,14 @@ if st.button("Snipe Prijzen", type="primary"):
                         raw_link = item.get("direct_link") or item.get("offer_page_link") or item.get("product_link") or item.get("link")
                         link = clean_store_link(raw_link, merchant, title)
                         
-                        snippet = item.get("snippet", "")
+     snippet = item.get("snippet", "")
                         ext_list = item.get("extensions", [])
                         extensions = " ".join([str(e) for e in ext_list]) if isinstance(ext_list, list) else ""
                         
+                        item_identifier = (merchant, price_str, title)
+                        if item_identifier not in seen_items:
+                            seen_items.add(item_identifier) 
+                            
 item_identifier = (merchant, price_str, title)
                         if item_identifier not in seen_items:
                             seen_items.add(item_identifier)
