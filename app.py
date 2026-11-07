@@ -7,11 +7,21 @@ from urllib.parse import urlparse, parse_qs, unquote
 st.set_page_config(page_title="Price Sniper App", page_icon="🎯", layout="centered")
 
 st.title("🎯 Universele E-Commerce Price Sniper")
-st.write("Automatische prijs- en volume-sniper voor al je e-commerce producten.")
+st.write("Plak een product-URL om direct te snipen op prijs per ml en totalen.")
 
-# Invoervelden
+# Product URL invoer (blijft zichtbaar)
 product_url = st.text_input("Product URL:", placeholder="Plak hier de product-URL...")
-serp_key = st.text_input("SerpApi Key:", type="password", placeholder="Jouw SerpApi Key")
+
+# Automatisch de SerpApi Key ophalen uit Streamlit Secrets (of fallback naar invoerveld indien lokaal)
+serp_key = ""
+try:
+    if "SERPAPI_KEY" in st.secrets:
+        serp_key = st.secrets["SERPAPI_KEY"]
+except Exception:
+    pass
+
+if not serp_key:
+    serp_key = st.text_input("SerpApi Key:", type="password", placeholder="Jouw SerpApi Key")
 
 def extract_query_from_url(url):
     parsed = urlparse(url)
@@ -33,10 +43,8 @@ def extract_query_from_url(url):
     return "product"
 
 def extract_volume_ml(text):
-    """Extraheert feilloos volumes en multipacks uit titels, omschrijvingen en varianten."""
     text_lower = str(text).lower()
     
-    # 1. Check voor expliciete vermenigvuldigingen zoals "3 x 400ml", "3x400 ml"
     multi_match = re.search(r'(\d+)\s*[xX]\s*(\d+)\s*(ml|l)', text_lower)
     if multi_match:
         count = int(multi_match.group(1))
@@ -46,7 +54,6 @@ def extract_volume_ml(text):
             amount *= 1000
         return count * amount
         
-    # 2. Check voor tekstvarianten zoals "3 stuks", "set van 3", "3-pack" in combinatie met ml/l
     pack_match = re.search(r'(?:set van\s*)?(\d+)\s*(?:stuks|pack|x).*?(\d+)\s*(ml|l)', text_lower)
     if pack_match:
         count = int(pack_match.group(1))
@@ -56,7 +63,6 @@ def extract_volume_ml(text):
             amount *= 1000
         return count * amount
 
-    # 3. Check voor losse volumes zoals "1.2 l", "1200ml", "400 ml"
     match = re.search(r'(\d+(?:[.,]\d+)?)\s*(ml|l)', text_lower)
     if match:
         val = float(match.group(1).replace(',', '.'))
@@ -72,9 +78,9 @@ search_query = st.text_input("Actieve zoekterm:", value=default_query)
 
 if st.button("Snipe Prijzen", type="primary"):
     if not product_url or not serp_key:
-        st.warning("Vul zowel een product-URL als je SerpApi Key in!")
+        st.warning("Vul een product-URL in (en controleer of je SerpApi Key correct is ingesteld in de Secrets)!")
     else:
-        with st.spinner("Volledige markt en alle sub-aanbieders automatisch aan het doorzoeken..."):
+        with st.spinner("Markt aan het doorzoeken..."):
             
             params = {
                 "engine": "google_shopping",
@@ -93,7 +99,6 @@ if st.button("Snipe Prijzen", type="primary"):
                     data = res.json()
                     shopping_results = data.get("shopping_results", [])
                     
-                    # Stap 1: Verzamel alle basisresultaten
                     for item in shopping_results:
                         merchant = str(item.get("source", "Onbekende winkel")).lower()
                         price_str = str(item.get("price", "999999"))
@@ -127,8 +132,6 @@ if st.button("Snipe Prijzen", type="primary"):
                                     shipping_text = "Ca. € 5,95"
                                     
                             total_cost = numeric_price + shipping_cost
-                            
-                            # Automatische volume-extractie over alle velden heen
                             full_text_context = f"{title} {snippet} {extensions}"
                             total_ml = extract_volume_ml(full_text_context)
                             
@@ -149,7 +152,6 @@ if st.button("Snipe Prijzen", type="primary"):
                                 "Link": link
                             })
                             
-                    # Stap 2: Diep doorzoeken via Google Product API om alle verborgen aanbieders/varianten los te trekken
                     for item in shopping_results[:3]:
                         product_id = item.get("product_id")
                         base_title = item.get("title", "Onbekend product")
@@ -166,13 +168,11 @@ if st.button("Snipe Prijzen", type="primary"):
                                 prod_res = requests.get("https://serpapi.com/search", params=prod_params, timeout=6)
                                 if prod_res.status_code == 200:
                                     prod_data = prod_res.json()
-                                    
                                     sellers = (
                                         prod_data.get("sellers_results", {}).get("online_sellers", []) or
                                         prod_data.get("offers", []) or
                                         prod_data.get("stores", [])
                                     )
-                                    
                                     for seller in sellers:
                                         merchant = str(seller.get("name") or seller.get("source") or "Onbekende winkel").lower()
                                         price_str = str(seller.get("base_price") or seller.get("price") or "999999")
@@ -207,7 +207,6 @@ if st.button("Snipe Prijzen", type="primary"):
                                                 shipping_text = "Ca. € 5,95"
                                                 
                                         total_cost = numeric_price + shipping_cost
-                                        
                                         full_text_context = f"{seller_title} {seller_snippet} {seller_ext}"
                                         total_ml = extract_volume_ml(full_text_context)
                                         
@@ -219,7 +218,7 @@ if st.button("Snipe Prijzen", type="primary"):
                                             unit_details = "Volume onbekend"
                                                 
                                         comparison_results.append({
-                                            "Store": merchant,
+                                        "Store": merchant,
                                             "Product": seller_title,
                                             "Price_Text": price_str,
                                             "Total_Val": total_cost,
@@ -232,11 +231,10 @@ if st.button("Snipe Prijzen", type="primary"):
             except Exception as e:
                 st.error(f"Fout bij ophalen: {e}")
                 
-            # Sorteer primair op de goedkoopste prijs per 100ml, onbekende volumes onderaan
             comparison_results = sorted(comparison_results, key=lambda x: (x["Price_Per_100ml"] if x["Price_Per_100ml"] < 999999 else x["Total_Val"]))
             
             if comparison_results:
-                msg = f"Gevonden deals voor: {search_query} ({len(comparison_results)} totaal, automatisch gesorteerd op prijs per ml)"
+                msg = f"Gevonden deals voor: {search_query} ({len(comparison_results)} totaal, gesorteerd op prijs per ml)"
                 st.success(msg)
                 
                 for item in comparison_results:
