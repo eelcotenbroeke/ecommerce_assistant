@@ -103,7 +103,6 @@ if st.button("Snipe Prijzen", type="primary"):
         st.warning("Vul een product-URL in (en controleer of je SerpApi Key correct is ingesteld in de Secrets)!")
     else:
         with st.spinner("Markt aan het doorzoeken..."):
-            
             params = {
                 "engine": "google_shopping",
                 "q": search_query,
@@ -122,12 +121,4 @@ if st.button("Snipe Prijzen", type="primary"):
                     shopping_results = data.get("shopping_results", [])
                     
                     for item in shopping_results:
-                        merchant = str(item.get("source", "Onbekende winkel")).lower()
-                        price_str = str(item.get("price", "999999"))
-                        title = item.get("title", "Onbekend product")
-                        
-                        raw_link = item.get("direct_link") or item.get("offer_page_link") or item.get("product_link") or item.get("link")
-                        link = clean_store_link(raw_link, merchant, title)
-                        
-                        snippet = item.get("snippet", "")
-                        extensions = " ".join(
+                        merchant = str
