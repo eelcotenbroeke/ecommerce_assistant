@@ -150,4 +150,12 @@ if st.button("Snipe Prijzen", type="primary"):
                                 shipping_text = "€ 0,00 (Amazon Prime Voordeel)"
                             else:
                                 if numeric_price >= 40.0:
-                                    shipping_cost =
+                                    shipping_cost = 0.0
+                                    shipping_text = "€ 0,00 (Gratis verzending > €40)"
+                                else:
+                                    shipping_cost = 5.95
+                                    shipping_text = "Ca. € 5,95"
+                                    
+                            total_cost = numeric_price + shipping_cost
+                            full_text_context = f"{title} {snippet} {extensions}"
+                            total_ml = extract_volume_ml(full_text_context)
