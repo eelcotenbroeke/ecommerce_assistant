@@ -87,4 +87,67 @@ def extract_volume_ml(text):
 
     match = re.search(r'(\d+(?:[.,]\d+)?)\s*(ml|l)', text_lower)
     if match:
-        val
+        val = float(match.group(1).replace(',', '.'))
+        unit = match.group(2)
+        if unit == 'l':
+            return val * 1000
+        return val
+        
+    return None
+
+default_query = extract_query_from_url(product_url) if product_url else ""
+search_query = st.text_input("Actieve zoekterm (inclusief gedetecteerd merk):", value=default_query)
+
+if st.button("Snipe Prijzen", type="primary"):
+    if not product_url or not serp_key:
+        st.warning("Vul een product-URL in (en controleer of je SerpApi Key correct is ingesteld in de Secrets)!")
+    else:
+        with st.spinner("Markt aan het doorzoeken..."):
+            params = {
+                "engine": "google_shopping",
+                "q": search_query,
+                "hl": "nl",
+                "gl": "nl",
+                "api_key": serp_key
+            }
+            
+            comparison_results = []
+            seen_items = set()
+            
+            try:
+                res = requests.get("https://serpapi.com/search", params=params, timeout=25)
+                if res.status_code == 200:
+                    data = res.json()
+                    shopping_results = data.get("shopping_results", [])
+                    
+                    for item in shopping_results:
+                        merchant = str(item.get("source", "Onbekende winkel")).lower()
+                        price_str = str(item.get("price", "999999"))
+                        title = item.get("title", "Onbekend product")
+                        
+                        raw_link = item.get("direct_link") or item.get("offer_page_link") or item.get("product_link") or item.get("link")
+                        link = clean_store_link(raw_link, merchant, title)
+                        
+                        snippet = item.get("snippet", "")
+                        ext_list = item.get("extensions", [])
+                        extensions = " ".join([str(e) for e in ext_list]) if isinstance(ext_list, list) else ""
+                        
+                        item_identifier = (merchant, price_str, title)
+                        if item_identifier not in seen_items:
+                            seen_items.add(item_identifier)
+                            
+                            try:
+                                clean_price = price_str.replace("€", "").replace(".", "").replace(",", ".").strip()
+                                numeric_price = float(clean_price)
+                            except Exception:
+                                numeric_price = 999999.0
+                                
+                            if "bol.com" in merchant:
+                                shipping_cost = 0.0
+                                shipping_text = "€ 0,00 (Bol Select Voordeel)"
+                            elif "amazon" in merchant:
+                                shipping_cost = 0.0
+                                shipping_text = "€ 0,00 (Amazon Prime Voordeel)"
+                            else:
+                                if numeric_price >= 40.0:
+                                    shipping_cost =
