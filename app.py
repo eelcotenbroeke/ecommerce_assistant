@@ -55,12 +55,18 @@ UNIT_FACTORS = {
 _NUM = r"(\d+(?:[.,]\d+)?)"
 _UNIT = r"(ml|cl|ltr|liter|litre|l)(?![a-z\u00e0-\u00ff'\u2019])"
 
-MULTI_RE = re.compile(rf"(\d+)\s*x\s*{_NUM}\s*{_UNIT}")
-SINGLE_RE = re.compile(rf"{_NUM}\s*{_UNIT}")
+ITEM_RE = re.compile(rf"(?:(\d+)\s*x\s*)?{_NUM}\s*{_UNIT}")
 COUNT_RE = re.compile(
-    r"(?:(?:set|pak|pack|verpakking|doos|box)\s+(?:van|of)\s+(\d+))"
-    r"|(?:(\d+)\s*-?\s*(?:stuks|stuk|pack|pak|flessen|fles|flesjes|st)(?![a-z\u00e0-\u00ff]))"
+    r"(?:(?:set|pak|pack|packung|verpakking|doos|box)\s+(?:van|of|mit)\s+(\d+))"
+    r"|(?:(\d+)\s*-?\s*(?:stuks|stuk|st\u00fcck|stk|pack|packung|pak|flessen|fles|flesjes|st)(?![a-z\u00e0-\u00ff]))"
+    r"|(?:(\d+)er[\s-]?(?:pack|packung|set|pak))"
 )
+COUNT_X_RE = re.compile(r"(?<![\w.,])(\d+)\s*x(?![a-z0-9\u00e0-\u00ff])")
+SEGMENT_SPLIT_RE = re.compile(r"[|+;]")
+BUNDLE_RE = re.compile(
+    r"\b(?:\w*set|pakket|bundel|duo|trio|combi\w*|geschenk\w*|cadeau\w*|kit)\b"
+)
+UNIT_FAMILY = {"ml": "ml", "cl": "cl", "l": "l", "ltr": "l", "liter": "l", "litre": "l"}
 
 URL_IGNORE_WORDS = {
     "p", "product", "dp", "nl", "en", "ref", "item", "g", "c", "f", "bp",
@@ -259,37 +265,124 @@ def to_ml(amount_text, unit):
     return amount * factor
 
 
-def extract_volume_ml(text):
+def _find_count(segment):
+    """Zoekt een aantal-aanduiding ('3x', '2 stuks', 'set van 3', '3er pack') in een tekstdeel."""
+    match = COUNT_RE.search(segment)
+    if match:
+        value = next((g for g in match.groups() if g), None)
+    else:
+        match = COUNT_X_RE.search(segment)
+        value = match.group(1) if match else None
+
+    if value is None:
+        return 1
+    count = int(value)
+    return count if 1 <= count <= 1000 else 1
+
+
+def _parse_segment(segment, bundle):
     """
-    Haalt het totale volume in ml uit een tekst.
-    Herkent o.a. '6 x 330 ml', '6x0,33l', '2 stuks 50 ml', 'set van 3 ... 100 ml', '1,5 l'.
-    Bij 'N stuks' + los volume wordt het volume per stuk aangenomen.
+    Leest het volume uit een tekstdeel (een product of een set-onderdeel).
+    Geeft (totaal_ml, uitleg) of None als er geen volume in staat.
+    """
+    items = []
+    seen = []
+    explicit_count = False
+
+    for match in ITEM_RE.finditer(segment):
+        per_item = to_ml(match.group(2), match.group(3))
+        if not per_item or per_item <= 0:
+            continue
+
+        count = int(match.group(1)) if match.group(1) else 1
+        if not 1 <= count <= 1000:
+            count = 1
+
+        family = UNIT_FAMILY[match.group(3)]
+        item_total = per_item * count
+
+        # Hetzelfde volume in een andere eenheid, bijv. '330 ml (0,33 l)', niet dubbel tellen.
+        is_duplicate = any(
+            abs(item_total - prev_total) <= 0.01 * item_total and family != prev_family
+            for prev_total, prev_family in seen
+        )
+        if is_duplicate:
+            continue
+        seen.append((item_total, family))
+
+        if match.group(1):
+            explicit_count = True
+
+        if count > 1:
+            label = f"{count} \u00d7 {per_item:g} ml"
+        else:
+            label = f"{per_item:g} ml"
+        items.append((item_total, label))
+
+    if not items:
+        return None
+
+    chosen = items if (bundle and len(items) > 1) else items[:1]
+    total = sum(entry[0] for entry in chosen)
+    labels = [entry[1] for entry in chosen]
+    label = " + ".join(labels)
+
+    if not explicit_count:
+        count = _find_count(segment)
+        if count > 1:
+            total *= count
+            if len(labels) == 1:
+                label = f"{count} \u00d7 {label}"
+            else:
+                label = f"{count} \u00d7 ({label})"
+
+    return total, label
+
+
+def extract_volume_info(text, sum_segments=True):
+    """
+    Haalt het totale volume in ml uit een tekst, plus een korte uitleg van de berekening.
+    Geeft (totaal_ml, uitleg), of (None, "") als er geen volume is gevonden.
+
+    Herkent o.a.:
+      '6 x 330 ml', '6x0,33l', '3x Product (400 ml)', '2 stuks 50 ml',
+      'set van 3 ... 100 ml', '3er Pack 250 ml', '1,5 l', '75 cl'.
+    Delen gescheiden door '|', '+' of ';' worden opgeteld (sets met meerdere producten).
+    Hetzelfde volume in twee eenheden ('330 ml (0,33 l)') telt maar een keer.
+    Met sum_segments=False wordt alleen het eerste gevonden volume gebruikt.
     """
     text_lower = str(text).lower().replace("\u00d7", "x")
+    bundle = sum_segments and bool(BUNDLE_RE.search(text_lower))
 
-    multi = MULTI_RE.search(text_lower)
-    if multi:
-        count = int(multi.group(1))
-        amount = to_ml(multi.group(2), multi.group(3))
-        if amount and 0 < count <= 1000:
-            return count * amount
+    parsed = []
+    seen_segments = set()
+    for segment in SEGMENT_SPLIT_RE.split(text_lower):
+        key = segment.strip()
+        if not key or key in seen_segments:
+            continue
+        seen_segments.add(key)
+        result = _parse_segment(segment, bundle)
+        if result:
+            parsed.append(result)
 
-    single = SINGLE_RE.search(text_lower)
-    if not single:
-        return None
+    if not parsed:
+        return None, ""
 
-    amount = to_ml(single.group(1), single.group(2))
-    if not amount or amount <= 0:
-        return None
+    chosen = parsed if sum_segments else parsed[:1]
+    total = sum(entry[0] for entry in chosen)
+    joined = " + ".join(entry[1] for entry in chosen)
 
-    count = 1
-    count_match = COUNT_RE.search(text_lower)
-    if count_match:
-        found = int(count_match.group(1) or count_match.group(2))
-        if 1 <= found <= 1000:
-            count = found
+    if len(chosen) > 1 or "\u00d7" in joined or " + " in joined:
+        note = f"{joined} = {total:g} ml"
+    else:
+        note = f"{total:g} ml"
 
-    return amount * count
+    return total, note
+
+
+def extract_volume_ml(text, sum_segments=True):
+    """Alleen het totale volume in ml (of None)."""
+    return extract_volume_info(text, sum_segments)[0]
 
 
 def shipping_from_text(raw):
@@ -324,7 +417,9 @@ def resolve_shipping(merchant_lower, price, shipping_raw):
     return estimate_shipping(merchant_lower, price)
 
 
-def build_row(merchant, title, price, link, shipping_cost, shipping_text, total_ml, source):
+def build_row(
+    merchant, title, price, link, shipping_cost, shipping_text, total_ml, source, volume_note=""
+):
     total_cost = price + shipping_cost
     per_liter = None
     per_100ml = None
@@ -339,6 +434,7 @@ def build_row(merchant, title, price, link, shipping_cost, shipping_text, total_
         "Verzending": shipping_text,
         "Totaal": total_cost,
         "Volume (ml)": total_ml,
+        "Volume-berekening": volume_note,
         "Per liter": per_liter,
         "Per 100 ml": per_100ml,
         "Bron": source,
@@ -431,9 +527,11 @@ def run_search(query, api_key, deep_scan, deep_limit):
         ext_list = item.get("extensions")
         extensions = " ".join(str(e) for e in ext_list) if isinstance(ext_list, list) else ""
 
-        total_ml = extract_volume_ml(title)
+        total_ml, volume_note = extract_volume_info(title)
         if total_ml is None:
-            total_ml = extract_volume_ml(f"{title} {snippet} {extensions}")
+            total_ml, volume_note = extract_volume_info(
+                f"{title} {snippet} {extensions}", sum_segments=False
+            )
 
         shipping_cost, shipping_text = resolve_shipping(
             merchant_lower, numeric_price, item.get("delivery")
@@ -442,14 +540,14 @@ def run_search(query, api_key, deep_scan, deep_limit):
         rows.append(
             build_row(
                 merchant, title, numeric_price, link,
-                shipping_cost, shipping_text, total_ml, "google_shopping",
+                shipping_cost, shipping_text, total_ml, "google_shopping", volume_note,
             )
         )
 
         if deep_scan and item.get("product_id") and len(deep_candidates) < deep_limit:
-            deep_candidates.append((str(item["product_id"]), title, total_ml))
+            deep_candidates.append((str(item["product_id"]), title, total_ml, volume_note))
 
-    for product_id, parent_title, parent_ml in deep_candidates:
+    for product_id, parent_title, parent_ml, parent_note in deep_candidates:
         detail_params = {
             "engine": "google_product",
             "product_id": product_id,
@@ -496,7 +594,7 @@ def run_search(query, api_key, deep_scan, deep_limit):
             rows.append(
                 build_row(
                     offer_merchant, parent_title, offer_price, offer_link,
-                    shipping_cost, shipping_text, parent_ml, "google_product",
+                    shipping_cost, shipping_text, parent_ml, "google_product", parent_note,
                 )
             )
 
@@ -551,6 +649,10 @@ def render_cards(df):
             else:
                 price_line += " \u00b7 volume onbekend"
             st.markdown(price_line)
+
+            volume_note = str(row["Volume-berekening"] or "")
+            if "=" in volume_note:
+                st.caption(f"Volume: {md_escape(volume_note)}")
 
             st.caption(
                 f"Prijs {fmt_eur(row['Prijs'])} \u00b7 verzending: {md_escape(row['Verzending'])}"
@@ -644,7 +746,8 @@ def render_results(snipe):
 
     st.caption(
         "Per liter en per 100 ml zijn berekend over prijs plus (geschatte) verzendkosten. "
-        "Bij 'N stuks + volume' in de titel wordt het volume per stuk aangenomen."
+        "Het volume wordt uit de titel afgeleid: aantallen zoals '3x' tellen mee en sets met "
+        "meerdere producten worden opgeteld. Twijfel je, check dan de volume-berekening op de kaart."
     )
     render_comparison_links(snipe["query"])
 
