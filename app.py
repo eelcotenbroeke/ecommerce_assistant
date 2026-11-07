@@ -5,6 +5,7 @@ Universele E-Commerce Price Sniper (Streamlit, Python 3.10+)
 - Zoekt via SerpApi (engine "google_shopping"), optioneel verdiept met "google_product"
 - Berekent prijs per liter / per 100 ml, inclusief multi-packs ("6 x 330 ml", "3 stuks 100 ml")
 - Valt terug op winkel-zoekpagina's i.p.v. Google-tracking-links
+- Mobielvriendelijk: resultaten als kaarten (standaard) of als tabel
 """
 
 import re
@@ -23,6 +24,8 @@ REQUEST_TIMEOUT = 25
 
 FREE_SHIPPING_THRESHOLD = 40.0
 DEFAULT_SHIPPING = 5.95
+
+INITIAL_CARDS = 8
 
 STORE_SEARCH_URLS = {
     "bol": "https://www.bol.com/nl/nl/s/?searchtext={q}",
@@ -54,6 +57,20 @@ URL_IGNORE_WORDS = {
     "p", "product", "dp", "nl", "en", "ref", "item", "g", "c", "f", "bp",
     "www", "html", "htm", "aspx", "php",
 }
+
+MOBILE_CSS = """
+<style>
+@media (max-width: 640px) {
+    [data-testid="stMainBlockContainer"], .block-container {
+        padding: 1.25rem 0.75rem 3rem 0.75rem;
+    }
+    h1 {
+        font-size: 1.6rem !important;
+        line-height: 1.25 !important;
+    }
+}
+</style>
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +130,20 @@ def parse_price(raw):
 def fmt_eur(value):
     """12345.6 -> '€ 12.345,60'"""
     text = f"{value:,.2f}"
-    return "€ " + text.replace(",", "_").replace(".", ",").replace("_", ".")
+    return "\u20ac " + text.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def md_escape(text):
+    """Escape markdown-tekens zodat titels (met $, *, _ enz.) letterlijk getoond worden."""
+    escaped = str(text)
+    for char in ("\\", "`", "*", "_", "$", "[", "]", "<", ">", "~", "#"):
+        escaped = escaped.replace(char, "\\" + char)
+    return escaped
+
+
+def safe_md_url(url):
+    """Maak een URL veilig voor gebruik in een markdown-link."""
+    return str(url).replace(" ", "%20").replace("(", "%28").replace(")", "%29")
 
 
 # ---------------------------------------------------------------------------
@@ -484,6 +514,63 @@ def link_column():
         return st.column_config.LinkColumn("Link")
 
 
+def render_cards(df):
+    """Toont resultaten als kaarten, ideaal voor een smal telefoonscherm."""
+    total = len(df)
+    show_all = bool(st.session_state.get("show_all_cards", False))
+    limit = total if show_all else min(INITIAL_CARDS, total)
+
+    best_index = None
+    if df["Per liter"].notna().any():
+        best_index = df["Per liter"].idxmin()
+
+    for index in range(limit):
+        row = df.iloc[index]
+        is_best = best_index is not None and index == best_index
+
+        with st.container(border=True):
+            prefix = "\U0001f3c6 " if is_best else ""
+            st.markdown(f"{prefix}**{md_escape(row['Winkel'])}**")
+            st.caption(md_escape(row["Product"]))
+
+            price_line = f"**{fmt_eur(row['Totaal'])}** totaal"
+            if pd.notna(row["Per liter"]):
+                price_line += (
+                    f" \u00b7 {row['Volume (ml)']:.0f} ml"
+                    f" \u00b7 **{fmt_eur(row['Per liter'])} / L**"
+                )
+            else:
+                price_line += " \u00b7 volume onbekend"
+            st.markdown(price_line)
+
+            st.caption(
+                f"Prijs {fmt_eur(row['Prijs'])} \u00b7 verzending: {md_escape(row['Verzending'])}"
+            )
+            st.markdown(f"[Open winkel \u2197]({safe_md_url(row['Link'])})")
+
+    if total > limit:
+        if st.button(f"Toon alle {total} resultaten"):
+            st.session_state["show_all_cards"] = True
+            st.rerun()
+
+
+def render_table(df):
+    """Toont resultaten als tabel (handig op een groter scherm)."""
+    st.dataframe(
+        df,
+        hide_index=True,
+        column_config={
+            "Product": st.column_config.TextColumn("Product", width="large"),
+            "Prijs": st.column_config.NumberColumn("Prijs", format="\u20ac %.2f"),
+            "Totaal": st.column_config.NumberColumn("Totaal incl. verz.", format="\u20ac %.2f"),
+            "Volume (ml)": st.column_config.NumberColumn("Volume (ml)", format="%.0f"),
+            "Per liter": st.column_config.NumberColumn("Per liter", format="\u20ac %.2f"),
+            "Per 100 ml": st.column_config.NumberColumn("Per 100 ml", format="\u20ac %.2f"),
+            "Link": link_column(),
+        },
+    )
+
+
 def render_results(snipe):
     for note in snipe["notes"]:
         st.warning(note)
@@ -498,6 +585,11 @@ def render_results(snipe):
     sort_choice = st.radio(
         "Sorteer op:",
         ["Prijs per liter", "Totaalprijs"],
+        horizontal=True,
+    )
+    view_choice = st.radio(
+        "Weergave:",
+        ["Kaarten", "Tabel"],
         horizontal=True,
     )
     sort_column = "Per liter" if sort_choice == "Prijs per liter" else "Totaal"
@@ -516,19 +608,10 @@ def render_results(snipe):
     else:
         st.info("Bij geen enkel resultaat kon een volume worden herkend, dus er is geen prijs per liter.")
 
-    st.dataframe(
-        df,
-        hide_index=True,
-        column_config={
-            "Product": st.column_config.TextColumn("Product", width="large"),
-            "Prijs": st.column_config.NumberColumn("Prijs", format="\u20ac %.2f"),
-            "Totaal": st.column_config.NumberColumn("Totaal incl. verz.", format="\u20ac %.2f"),
-            "Volume (ml)": st.column_config.NumberColumn("Volume (ml)", format="%.0f"),
-            "Per liter": st.column_config.NumberColumn("Per liter", format="\u20ac %.2f"),
-            "Per 100 ml": st.column_config.NumberColumn("Per 100 ml", format="\u20ac %.2f"),
-            "Link": link_column(),
-        },
-    )
+    if view_choice == "Kaarten":
+        render_cards(df)
+    else:
+        render_table(df)
 
     st.caption(
         "Per liter en per 100 ml zijn berekend over prijs plus (geschatte) verzendkosten. "
@@ -540,7 +623,8 @@ def render_results(snipe):
 # App
 # ---------------------------------------------------------------------------
 
-st.set_page_config(page_title="Price Sniper App", page_icon="\U0001f3af", layout="wide")
+st.set_page_config(page_title="Price Sniper App", page_icon="\U0001f3af", layout="centered")
+st.markdown(MOBILE_CSS, unsafe_allow_html=True)
 
 st.title("\U0001f3af Universele E-Commerce Price Sniper")
 st.write("Automatische prijs- en volume-sniper met directe winkel-zoeklinks.")
@@ -584,6 +668,7 @@ if st.button("Snipe Prijzen", type="primary"):
             result_rows, result_notes = run_search(
                 search_query.strip(), serp_key, deep_scan, deep_limit
             )
+        st.session_state["show_all_cards"] = False
         st.session_state["snipe"] = {
             "query": search_query.strip(),
             "rows": result_rows,
