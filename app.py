@@ -136,26 +136,26 @@ if st.button("Snipe Prijzen", type="primary"):
                         if item_identifier not in seen_items:
                             seen_items.add(item_identifier)
                             
-                            try:
-                                clean_price = price_str.replace("€", "").replace(".", "").replace(",", ".").strip()
-                                numeric_price = float(clean_price)
-                            except Exception:
-                                numeric_price = 999999.0
-                                
-                            if "bol.com" in merchant:
-                                shipping_cost = 0.0
-                                shipping_text = "€ 0,00 (Bol Select Voordeel)"
-                            elif "amazon" in merchant:
-                                shipping_cost = 0.0
-                                shipping_text = "€ 0,00 (Amazon Prime Voordeel)"
-                            else:
-                                if numeric_price >= 40.0:
-                                    shipping_cost = 0.0
-                                    shipping_text = "€ 0,00 (Gratis verzending > €40)"
-                                else:
-                                    shipping_cost = 5.95
-                                    shipping_text = "Ca. € 5,95"
-                                    
-                            total_cost = numeric_price + shipping_cost
-                            full_text_context = f"{title} {snippet} {extensions}"
-                            total_ml = extract_volume_ml(full_text_context)
+                    try:
+                clean_price = price_str.replace("€", "").replace(".", "").replace(",", ".").strip()
+                numeric_price = float(clean_price)
+            except Exception:
+                numeric_price = 999999.0
+                
+            if "bol.com" in merchant:
+                shipping_cost = 0.0
+                shipping_text = "€ 0,00 (Bol Select Voordeel)"
+            elif "amazon" in merchant:
+                shipping_cost = 0.0
+                shipping_text = "€ 0,00 (Amazon Prime Voordeel)"
+            else:
+                if numeric_price >= 40.0:
+                    shipping_cost = 0.0
+                    shipping_text = "€ 0,00 (Gratis verzending > €40)"
+                else:
+                    shipping_cost = 5.95
+                    shipping_text = "Ca. € 5,95"
+                    
+            total_cost = numeric_price + shipping_cost
+            full_text_context = f"{title} {snippet} {extensions}"
+            total_ml = extract_volume_ml(full_text_context)
