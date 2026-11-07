@@ -7,7 +7,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 st.set_page_config(page_title="Price Sniper App", page_icon="🎯", layout="centered")
 
 st.title("🎯 Universele E-Commerce Price Sniper")
-st.write("Automatische prijs- en volume-sniper met werkende winkel-links.")
+st.write("Automatische prijs- en volume-sniper met verplichte merknamen in de zoekopdracht.")
 
 # Product URL invoer
 product_url = st.text_input("Product URL:", placeholder="Plak hier de product-URL...")
@@ -24,22 +24,34 @@ if not serp_key:
     serp_key = st.text_input("SerpApi Key:", type="password", placeholder="Jouw SerpApi Key")
 
 def extract_query_from_url(url):
+    """Extraheert de zoekterm uit de URL en zorgt dat merk- en productwoorden behouden blijven."""
+    if not url:
+        return ""
     parsed = urlparse(url)
     query_params = parse_qs(parsed.query)
+    
+    # Check eerst of er een zoekterm in de query parameters staat
     for param in ['q', 'search', 'query', 'keyword', 'keywords']:
         if param in query_params:
             return unquote(query_params[param][0]).replace("+", " ")
+            
+    # Anders parsen we het URL-pad (slug)
     path_parts = parsed.path.lower().split('/')
     cleaned_words = []
-    ignore_list = ['p', 'product', 'dp', 'nl', 'en', 'ref', 'item', 'g', 'c', 'f']
+    # Alleen echte technische webshop-noise negeren, merknamen en producttermen blijven staan
+    ignore_list = ['p', 'product', 'dp', 'nl', 'en', 'ref', 'item', 'g', 'c', 'f', 'bp']
+    
     for part in path_parts:
-        if not part or part.isdigit() or len(part) <= 2:
+        if not part or part.isdigit() or (len(part) <= 2 and part not in ['ml', 'l']):
             continue
         for sub in part.replace('_', '-').split('-'):
             if sub and sub not in ignore_list and not sub.startswith('b0') and not sub.isdigit():
                 cleaned_words.append(sub)
+                
     if cleaned_words:
-        return " ".join(cleaned_words[:5])
+        # Pak de meest relevante woorden (inclusief merknaam uit de URL)
+        return " ".join(cleaned_words[:6])
+        
     return "product"
 
 def clean_store_link(raw_link, merchant="", product_title=""):
@@ -81,13 +93,14 @@ def extract_volume_ml(text):
     return None
 
 default_query = extract_query_from_url(product_url) if product_url else ""
-search_query = st.text_input("Actieve zoekterm:", value=default_query)
+# De actieve zoekterm is nu direct aanpasbaar, maar start met de gegarandeerde merk- en productdata uit de URL
+search_query = st.text_input("Actieve zoekterm (inclusief gedetecteerd merk):", value=default_query)
 
 if st.button("Snipe Prijzen", type="primary"):
     if not product_url or not serp_key:
         st.warning("Vul een product-URL in (en controleer of je SerpApi Key correct is ingesteld in de Secrets)!")
     else:
-        with st.spinner("Markt aan het doorzoeken..."):
+        with st.spinner("Markt aan het doorzoeken met geforceerde merk-koppeling..."):
             
             params = {
                 "engine": "google_shopping",
