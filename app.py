@@ -130,8 +130,8 @@ if st.button("Snipe Prijzen", type="primary"):
                         snippet = item.get("snippet", "")
                         ext_list = item.get("extensions", [])
                         extensions = " ".join([str(e) for e in ext_list]) if isinstance(ext_list, list) else ""
-                        
-                        item_identifier = (merchant, price_str, title)
+
+item_identifier = (merchant, price_str, title)
                         if item_identifier not in seen_items:
                             seen_items.add(item_identifier)
                             
@@ -158,4 +158,3 @@ if st.button("Snipe Prijzen", type="primary"):
                             total_cost = numeric_price + shipping_cost
                             full_text_context = f"{title} {snippet} {extensions}"
                             total_ml = extract_volume_ml(full_text_context)
-                    
