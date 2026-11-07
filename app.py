@@ -155,40 +155,4 @@ if st.button("Snipe Prijzen", type="primary"):
                                 price_per_100ml = (total_cost / total_ml) * 100
                                 unit_details = f"Volume: {int(total_ml)} ml | Prijs per 100 ml: € {price_per_100ml:.2f}"
                             else:
-                                price_per_100ml = 999999.0
-                                unit_details = "Volume onbekend"
-                                    
-                            comparison_results.append({
-                                "Store": merchant,
-                                "Product": title,
-                                "Price_Text": price_str,
-                                "Total_Val": total_cost,
-                                "Price_Per_100ml": price_per_100ml,
-                                "Details": f"Product: € {numeric_price:.2f} + Verzending: {shipping_text} \n\n*{unit_details}*",
-                                "Link": link
-                            })
-                            
-                    for item in shopping_results[:3]:
-                        product_id = item.get("product_id")
-                        base_title = item.get("title", "Onbekend product")
-                        
-                        if product_id:
-                            prod_params = {
-                                "engine": "google_product",
-                                "product_id": product_id,
-                                "hl": "nl",
-                                "gl": "nl",
-                                "api_key": serp_key
-                            }
-                            try:
-                                prod_res = requests.get("https://serpapi.com/search", params=prod_params, timeout=15)
-                                if prod_res.status_code == 200:
-                                    prod_data = prod_res.json()
-                                    sellers = (
-                                        prod_data.get("sellers_results", {}).get("online_sellers", []) or
-                                        prod_data.get("offers", []) or
-                                        prod_data.get("stores", [])
-                                    )
-                                    for seller in sellers:
-                                        merchant = str(seller.get("name") or seller.get("source") or "Onbekende winkel").lower()
-                                        price_str = str(seller.get("base_price") or seller.
+                                price_per_100
