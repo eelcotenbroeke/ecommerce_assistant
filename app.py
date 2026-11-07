@@ -136,11 +136,11 @@ if st.button("Snipe Prijzen", type="primary"):
                         if item_identifier not in seen_items:
                             seen_items.add(item_identifier)
                             
-                    try:
-                clean_price = price_str.replace("€", "").replace(".", "").replace(",", ".").strip()
-                numeric_price = float(clean_price)
-            except Exception:
-                numeric_price = 999999.0
+  try:
+                                clean_price = price_str.replace("€", "").replace(".", "").replace(",", ".").strip()
+                                numeric_price = float(clean_price)
+                            except Exception:
+                                numeric_price = 999999.0
                 
             if "bol.com" in merchant:
                 shipping_cost = 0.0
