@@ -7,12 +7,12 @@ from urllib.parse import urlparse, parse_qs, unquote
 st.set_page_config(page_title="Price Sniper App", page_icon="🎯", layout="centered")
 
 st.title("🎯 Universele E-Commerce Price Sniper")
-st.write("Plak een product-URL om direct te snipen op prijs per ml en totalen.")
+st.write("Automatische prijs- en volume-sniper met directe webshop-links.")
 
-# Product URL invoer (blijft zichtbaar)
+# Product URL invoer
 product_url = st.text_input("Product URL:", placeholder="Plak hier de product-URL...")
 
-# Automatisch de SerpApi Key ophalen uit Streamlit Secrets (of fallback naar invoerveld indien lokaal)
+# SerpApi Key ophalen via Secrets (met fallback voor lokaal testen)
 serp_key = ""
 try:
     if "SERPAPI_KEY" in st.secrets:
@@ -80,7 +80,7 @@ if st.button("Snipe Prijzen", type="primary"):
     if not product_url or not serp_key:
         st.warning("Vul een product-URL in (en controleer of je SerpApi Key correct is ingesteld in de Secrets)!")
     else:
-        with st.spinner("Markt aan het doorzoeken..."):
+        with st.spinner("Markt aan het doorzoeken en schone links ophalen..."):
             
             params = {
                 "engine": "google_shopping",
@@ -102,7 +102,15 @@ if st.button("Snipe Prijzen", type="primary"):
                     for item in shopping_results:
                         merchant = str(item.get("source", "Onbekende winkel")).lower()
                         price_str = str(item.get("price", "999999"))
-                        link = item.get("link") or item.get("product_link") or item.get("direct_link")
+                        
+                        # Prioriteer directe webshop links als die aanwezig zijn in de API response
+                        link = (
+                            item.get("direct_link") or 
+                            item.get("offer_page_link") or 
+                            item.get("product_link") or 
+                            item.get("link")
+                        )
+                        
                         title = item.get("title", "Onbekend product")
                         snippet = item.get("snippet", "")
                         extensions = " ".join(str(e) for e in item.get("extensions", []))
@@ -176,7 +184,13 @@ if st.button("Snipe Prijzen", type="primary"):
                                     for seller in sellers:
                                         merchant = str(seller.get("name") or seller.get("source") or "Onbekende winkel").lower()
                                         price_str = str(seller.get("base_price") or seller.get("price") or "999999")
-                                        link = seller.get("link") or seller.get("direct_link") or seller.get("offer_page_link")
+                                        
+                                        link = (
+                                            seller.get("direct_link") or 
+                                            seller.get("offer_page_link") or 
+                                            seller.get("link")
+                                        )
+                                        
                                         seller_title = seller.get("title") or base_title
                                         seller_snippet = seller.get("snippet", "")
                                         seller_ext = " ".join(str(e) for e in seller.get("extensions", []))
@@ -218,7 +232,7 @@ if st.button("Snipe Prijzen", type="primary"):
                                             unit_details = "Volume onbekend"
                                                 
                                         comparison_results.append({
-                                        "Store": merchant,
+                                            "Store": merchant,
                                             "Product": seller_title,
                                             "Price_Text": price_str,
                                             "Total_Val": total_cost,
