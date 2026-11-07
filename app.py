@@ -130,7 +130,7 @@ if st.button("Snipe Prijzen", type="primary"):
                             try:
                                 clean_price = price_str.replace("€", "").replace(".", "").replace(",", ".").strip()
                                 numeric_price = float(clean_price)
-                            except:
+                            except Exception:
                                 numeric_price = 999999.0
                                 
                             if "bol.com" in merchant:
@@ -200,4 +200,44 @@ if st.button("Snipe Prijzen", type="primary"):
                                         seller_snippet = seller.get("snippet", "")
                                         seller_ext = " ".join(str(e) for e in seller.get("extensions", []))
                                         
-                                        item_id = (merchant
+                                        item_id = (merchant, price_str, seller_title)
+                                        if item_id in seen_items:
+                                            continue
+                                        seen_items.add(item_id)
+                                        
+                                        try:
+                                            clean_price = price_str.replace("€", "").replace(".", "").replace(",", ".").strip()
+                                            numeric_price = float(clean_price)
+                                        except Exception:
+                                            numeric_price = 999999.0
+                                            
+                                        if "bol.com" in merchant:
+                                            shipping_cost = 0.0
+                                            shipping_text = "€ 0,00 (Bol Select Voordeel)"
+                                        elif "amazon" in merchant:
+                                            shipping_cost = 0.0
+                                            shipping_text = "€ 0,00 (Amazon Prime Voordeel)"
+                                        else:
+                                            if numeric_price >= 40.0:
+                                                shipping_cost = 0.0
+                                                shipping_text = "€ 0,00 (Gratis verzending > €40)"
+                                            else:
+                                                shipping_cost = 5.95
+                                                shipping_text = "Ca. € 5,95"
+                                                
+                                        total_cost = numeric_price + shipping_cost
+                                        full_text_context = f"{seller_title} {seller_snippet} {seller_ext}"
+                                        total_ml = extract_volume_ml(full_text_context)
+                                        
+                                        if total_ml and total_ml > 0:
+                                            price_per_100ml = (total_cost / total_ml) * 100
+                                            unit_details = f"Volume: {int(total_ml)} ml | Prijs per 100 ml: € {price_per_100ml:.2f}"
+                                        else:
+                                            price_per_100ml = 999999.0
+                                            unit_details = "Volume onbekend"
+                                                
+                                        comparison_results.append({
+                                            "Store": merchant,
+                                            "Product": seller_title,
+                                            "Price_Text": price_str,
+                                            "Total_Val": total_cost,
