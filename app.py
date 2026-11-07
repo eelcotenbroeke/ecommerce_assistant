@@ -178,4 +178,85 @@ if st.button("Snipe Prijzen", type="primary"):
                                 "product_id": product_id,
                                 "hl": "nl",
                                 "gl": "nl",
-                                "api_
+                                "api_key": serp_key
+                            }
+                            try:
+                                prod_res = requests.get("https://serpapi.com/search", params=prod_params, timeout=15)
+                                if prod_res.status_code == 200:
+                                    prod_data = prod_res.json()
+                                    sellers = prod_data.get("sellers_results", {}).get("online_sellers", []) or prod_data.get("offers", []) or prod_data.get("stores", [])
+                                    for seller in sellers:
+                                        merchant = str(seller.get("name") or seller.get("source") or "Onbekende winkel").lower()
+                                        price_str = str(seller.get("base_price") or seller.get("price") or "999999")
+                                        seller_title = seller.get("title") or base_title
+                                        
+                                        raw_link = seller.get("direct_link") or seller.get("offer_page_link") or seller.get("link")
+                                        link = clean_store_link(raw_link, merchant, seller_title)
+                                        
+                                        seller_snippet = seller.get("snippet", "")
+                                        seller_ext = " ".join(str(e) for e in seller.get("extensions", []))
+                                        
+                                        item_id = (merchant, price_str, seller_title)
+                                        if item_id in seen_items:
+                                            continue
+                                        seen_items.add(item_id)
+                                        
+                                        try:
+                                            clean_price = price_str.replace("€", "").replace(".", "").replace(",", ".").strip()
+                                            numeric_price = float(clean_price)
+                                        except Exception:
+                                            numeric_price = 999999.0
+                                            
+                                        if "bol.com" in merchant:
+                                            shipping_cost = 0.0
+                                            shipping_text = "€ 0,00 (Bol Select Voordeel)"
+                                        elif "amazon" in merchant:
+                                            shipping_cost = 0.0
+                                            shipping_text = "€ 0,00 (Amazon Prime Voordeel)"
+                                        else:
+                                            if numeric_price >= 40.0:
+                                                shipping_cost = 0.0
+                                                shipping_text = "€ 0,00 (Gratis verzending > €40)"
+                                            else:
+                                                shipping_cost = 5.95
+                                                shipping_text = "Ca. € 5,95"
+                                                
+                                        total_cost = numeric_price + shipping_cost
+                                        full_text_context = f"{seller_title} {seller_snippet} {seller_ext}"
+                                        total_ml = extract_volume_ml(full_text_context)
+                                        
+                                        if total_ml and total_ml > 0:
+                                            price_per_100ml = (total_cost / total_ml) * 100
+                                            unit_details = f"Volume: {int(total_ml)} ml | Prijs per 100 ml: € {price_per_100ml:.2f}"
+                                        else:
+                                            price_per_100ml = 999999.0
+                                            unit_details = "Volume onbekend"
+                                                
+                                        comparison_results.append({
+                                            "Store": merchant,
+                                            "Product": seller_title,
+                                            "Price_Text": price_str,
+                                            "Total_Val": total_cost,
+                                            "Price_Per_100ml": price_per_100ml,
+                                            "Details": f"Product: € {numeric_price:.2f} + Verzending: {shipping_text} \n\n*{unit_details}*",
+                                            "Link": link
+                                        })
+                            except Exception:
+                                pass
+            except requests.exceptions.Timeout:
+                st.error("De verbinding met SerpApi duurde te lang (timeout). Probeer het zo nog eens.")
+            except Exception as e:
+                st.error(f"Fout bij ophalen: {e}")
+                
+            comparison_results = sorted(comparison_results, key=lambda x: (x["Price_Per_100ml"] if x["Price_Per_100ml"] < 999999 else x["Total_Val"]))
+            
+            if comparison_results:
+                msg = f"Gevonden deals voor: {search_query} ({len(comparison_results)} totaal, gesorteerd op prijs per ml)"
+                st.success(msg)
+                
+                for item in comparison_results:
+                    with st.container():
+                        header_text = f"🛒 {item['Store'].upper()} — Totaal: € {item['Total_Val']:.2f}"
+                        st.markdown(header_text.replace(".", ","))
+                        st.write(f"**{item['Product']}**")
+                        st.markdown(item['Details'].replace(".", ","))
