@@ -107,7 +107,6 @@ if st.button("Snipe Prijzen", type="primary"):
             seen_items = set()
             
             try:
-                # Timeout verhoogd naar 25 seconden om time-outs te voorkomen
                 res = requests.get("https://serpapi.com/search", params=params, timeout=25)
                 if res.status_code == 200:
                     data = res.json()
@@ -164,21 +163,4 @@ if st.button("Snipe Prijzen", type="primary"):
                                 "Product": title,
                                 "Price_Text": price_str,
                                 "Total_Val": total_cost,
-                                "Price_Per_100ml": price_per_100ml,
-                                "Details": f"Product: € {numeric_price:.2f} + Verzending: {shipping_text} \n\n*{unit_details}*",
-                                "Link": link
-                            })
-                            
-                    for item in shopping_results[:3]:
-                        product_id = item.get("product_id")
-                        base_title = item.get("title", "Onbekend product")
-                        
-                        if product_id:
-                            prod_params = {
-                                "engine": "google_product",
-                                "product_id": product_id,
-                                "hl": "nl",
-                                "gl": "nl",
-                                "api_key": serp_key
-                            }
-                            try:
+                                "Price_Per_100ml":
