@@ -87,38 +87,4 @@ def extract_volume_ml(text):
 
     match = re.search(r'(\d+(?:[.,]\d+)?)\s*(ml|l)', text_lower)
     if match:
-        val = float(match.group(1).replace(',', '.'))
-        unit = match.group(2)
-        if unit == 'l':
-            return val * 1000
-        return val
-        
-    return None
-
-default_query = extract_query_from_url(product_url) if product_url else ""
-search_query = st.text_input("Actieve zoekterm (inclusief gedetecteerd merk):", value=default_query)
-
-if st.button("Snipe Prijzen", type="primary"):
-    if not product_url or not serp_key:
-        st.warning("Vul een product-URL in (en controleer of je SerpApi Key correct is ingesteld in de Secrets)!")
-    else:
-        with st.spinner("Markt aan het doorzoeken..."):
-            params = {
-                "engine": "google_shopping",
-                "q": search_query,
-                "hl": "nl",
-                "gl": "nl",
-                "api_key": serp_key
-            }
-            
-            comparison_results = []
-            seen_items = set()
-            
-            try:
-                res = requests.get("https://serpapi.com/search", params=params, timeout=25)
-                if res.status_code == 200:
-                    data = res.json()
-                    shopping_results = data.get("shopping_results", [])
-                    
-                    for item in shopping_results:
-                        merchant = str
+        val
