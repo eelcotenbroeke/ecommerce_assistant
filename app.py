@@ -3,12 +3,18 @@ Universele E-Commerce Price Sniper (Streamlit, Python 3.10+)
 
 - Haalt een zoekterm uit een product-URL (of gebruik je eigen zoekterm)
 - Zoekt via SerpApi (engine "google_shopping"), optioneel verdiept met "google_product"
-- Berekent prijs per liter / per 100 ml, inclusief multi-packs ("6 x 330 ml", "3 stuks 100 ml")
+- Berekent prijs per liter / per 100 ml, inclusief multi-packs en sets
+- Spoort acties zoals "1+1 gratis" op door winkelpagina's te controleren (en laat je
+  per kaart handmatig een actie kiezen)
 - Valt terug op winkel-zoekpagina's i.p.v. Google-tracking-links
 - Mobielvriendelijk: resultaten als kaarten (standaard) of als tabel
 """
 
+import html
 import re
+import time
+import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 import pandas as pd
@@ -21,6 +27,17 @@ import streamlit as st
 
 SERPAPI_URL = "https://serpapi.com/search"
 REQUEST_TIMEOUT = 25
+
+PAGE_TIMEOUT = 8
+MAX_PAGE_CHARS = 1_500_000
+DEFAULT_PAGE_CHECKS = 5
+PAGE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.5",
+}
 
 FREE_SHIPPING_THRESHOLD = 40.0
 DEFAULT_SHIPPING = 5.95
@@ -42,6 +59,15 @@ COMPARISON_SITES = [
     {"name": "Kieskeurig.nl", "domain": "kieskeurig.nl", "search_url": None},
     {"name": "Kelkoo.nl", "domain": "kelkoo.nl", "search_url": None},
 ]
+
+# Acties: label -> (aantal stuks dat je koopt, aantal stuks dat je betaalt)
+PROMO_RULES = {
+    "Geen": None,
+    "1+1 gratis": (2, 1.0),
+    "2e halve prijs": (2, 1.5),
+    "2+1 gratis": (3, 2.0),
+    "3 voor 2": (3, 2.0),
+}
 
 UNIT_FACTORS = {
     "ml": 1.0,
@@ -67,6 +93,53 @@ BUNDLE_RE = re.compile(
     r"\b(?:\w*set|pakket|bundel|duo|trio|combi\w*|geschenk\w*|cadeau\w*|kit)\b"
 )
 UNIT_FAMILY = {"ml": "ml", "cl": "cl", "l": "l", "ltr": "l", "liter": "l", "litre": "l"}
+
+PROMO_PLUS_RE = re.compile(r"\b(\d)\s*\+\s*(\d)\s*gratis")
+PROMO_SECOND_FREE_RE = re.compile(r"\b(?:2e|2de|tweede)\s+(?:product\s+)?gratis")
+PROMO_SECOND_HALF_RE = re.compile(
+    r"\b(?:2e|2de|tweede)\s+(?:product\s+)?(?:voor\s+de\s+helft|halve\s+prijs|half\s+geld)"
+    r"|\b50\s*%\s*korting\s+op\s+(?:de\s+)?(?:2e|2de|tweede)"
+)
+PROMO_FOR_RE = re.compile(r"\b(\d)\s*voor\s*(\d)\b(?![.,]?\d)(?!\s*(?:\u20ac|eur))")
+
+BOL_TOKEN_URL = "https://login.bol.com/token"
+BOL_API_BASE = "https://api.bol.com/marketing/catalog/v1"
+BOL_PAGE_SIZE = 50
+
+MATCH_LEVELS = ["Strikt", "Gemiddeld", "Alles"]
+MATCH_HELP = (
+    "Strikt: zelfde product, zelfde producttype en zelfde inhoud (multipacks van dezelfde "
+    "verpakking mogen), geen sets. Gemiddeld: zelfde product en producttype, inhoud en sets "
+    "mogen afwijken. Alles: geen filter."
+)
+
+STOPWORDS = {
+    "de", "het", "een", "voor", "met", "en", "van", "the", "for", "and", "with", "of",
+    "bij", "op", "in", "set", "stuks", "stuk", "pack", "nieuw", "new", "original",
+    "originele",
+}
+
+# Producttype-families. Woorden in SUBSTRING_OK mogen ook midden in een woord voorkomen
+# ('babyshampoo'); de rest moet een heel woord zijn.
+TYPE_FAMILIES = {
+    "shampoo": ["shampoo", "shampooing", "shampoing", "bain"],
+    "conditioner": ["conditioner", "conditionneur", "fondant", "spoeling"],
+    "masker": ["masker", "mask", "masque", "haarmasker"],
+    "serum": ["serum"],
+    "olie": ["olie", "oil", "huile"],
+    "spray": ["spray"],
+    "creme": ["creme", "cream"],
+    "lotion": ["lotion"],
+    "gel": ["douchegel", "douchecreme", "bodywash", "gel"],
+    "deodorant": ["deodorant", "deo"],
+    "parfum": ["parfum", "edp", "edt", "eau"],
+}
+SUBSTRING_OK = {
+    "shampoo", "shampooing", "shampoing", "conditioner", "conditionneur", "masker",
+    "masque", "haarmasker", "serum", "huile", "spray", "douchegel", "douchecreme",
+    "bodywash", "deodorant", "lotion",
+}
+BUNDLE_FALSE_POSITIVES = {"reset", "offset", "onset", "upset", "unset", "preset", "inset"}
 
 URL_IGNORE_WORDS = {
     "p", "product", "dp", "nl", "en", "ref", "item", "g", "c", "f", "bp",
@@ -418,7 +491,8 @@ def resolve_shipping(merchant_lower, price, shipping_raw):
 
 
 def build_row(
-    merchant, title, price, link, shipping_cost, shipping_text, total_ml, source, volume_note=""
+    merchant, title, price, link, shipping_cost, shipping_text, total_ml, source,
+    volume_note="", direct_link=False,
 ):
     total_cost = price + shipping_cost
     per_liter = None
@@ -428,6 +502,7 @@ def build_row(
         per_100ml = total_cost / (total_ml / 100.0)
 
     return {
+        "ID": 0,
         "Winkel": merchant,
         "Product": title,
         "Prijs": price,
@@ -439,7 +514,450 @@ def build_row(
         "Per 100 ml": per_100ml,
         "Bron": source,
         "Link": link,
+        "Directe link": direct_link,
+        "Actie (gedetecteerd)": "",
+        "Actie-aantal": 0,
+        "Actie-betaal": 0.0,
+        "Actie-tekst": "",
     }
+
+
+# ---------------------------------------------------------------------------
+# Acties (1+1 gratis, 2e halve prijs, ...)
+# ---------------------------------------------------------------------------
+
+def _make_promo(label, units, paid, source_text, match):
+    start = max(0, match.start() - 20)
+    end = min(len(source_text), match.end() + 170)
+    snippet = " ".join(source_text[start:end].split())
+    return {"label": label, "units": units, "paid": paid, "snippet": snippet}
+
+
+def detect_promo(text):
+    """
+    Zoekt een multi-buy actie in de tekst van een winkelpagina.
+    Geeft {"label", "units", "paid", "snippet"} of None.
+    Procentuele kortingen worden bewust genegeerd: die zitten meestal al in de feedprijs.
+    """
+    lowered = str(text).lower()
+    source = str(text) if len(str(text)) == len(lowered) else lowered
+
+    match = PROMO_PLUS_RE.search(lowered)
+    if match:
+        paid = int(match.group(1))
+        free = int(match.group(2))
+        if paid >= 1 and free >= 1 and paid + free <= 6:
+            return _make_promo(f"{paid}+{free} gratis", paid + free, float(paid), source, match)
+
+    match = PROMO_SECOND_FREE_RE.search(lowered)
+    if match:
+        return _make_promo("1+1 gratis", 2, 1.0, source, match)
+
+    match = PROMO_SECOND_HALF_RE.search(lowered)
+    if match:
+        return _make_promo("2e halve prijs", 2, 1.5, source, match)
+
+    match = PROMO_FOR_RE.search(lowered)
+    if match:
+        buy = int(match.group(1))
+        pay = int(match.group(2))
+        if 2 <= buy <= 6 and 1 <= pay < buy:
+            return _make_promo(f"{buy} voor {pay}", buy, float(pay), source, match)
+
+    return None
+
+
+def fetch_page_text(url):
+    """Haalt een winkelpagina op en geeft de zichtbare tekst terug (None bij mislukken)."""
+    try:
+        res = requests.get(url, headers=PAGE_HEADERS, timeout=PAGE_TIMEOUT)
+    except requests.RequestException:
+        return None
+
+    if res.status_code != 200:
+        return None
+    if "html" not in str(res.headers.get("Content-Type", "")).lower():
+        return None
+
+    raw_html = res.text[:MAX_PAGE_CHARS]
+    raw_html = re.sub(r"(?is)<(script|style|noscript)\b.*?</\1>", " ", raw_html)
+    raw_html = re.sub(r"(?s)<[^>]+>", " ", raw_html)
+    return " ".join(html.unescape(raw_html).split())
+
+
+def apply_page_promos(rows, limit):
+    """
+    Controleert de pagina's van de beste resultaten op acties en vult de rijen aan.
+    Geeft een lijst met infoberichten terug.
+    """
+    candidates = [row for row in rows if row.get("Directe link")]
+    candidates.sort(
+        key=lambda r: (
+            r["Per liter"] is None,
+            r["Per liter"] if r["Per liter"] is not None else r["Totaal"],
+        )
+    )
+
+    targets = []
+    seen_urls = set()
+    for row in candidates:
+        if row["Link"] in seen_urls:
+            continue
+        seen_urls.add(row["Link"])
+        targets.append(row)
+        if len(targets) >= limit:
+            break
+
+    if not targets:
+        return []
+
+    with ThreadPoolExecutor(max_workers=min(5, len(targets))) as pool:
+        texts = list(pool.map(fetch_page_text, [row["Link"] for row in targets]))
+
+    readable = 0
+    found = 0
+    for row, text in zip(targets, texts):
+        if not text:
+            continue
+        readable += 1
+        promo = detect_promo(text)
+        if promo:
+            found += 1
+            row["Actie (gedetecteerd)"] = promo["label"]
+            row["Actie-aantal"] = promo["units"]
+            row["Actie-betaal"] = promo["paid"]
+            row["Actie-tekst"] = promo["snippet"]
+
+    info = (
+        f"{readable} van {len(targets)} winkelpagina's gecontroleerd op acties; "
+        f"{found} actie(s) gevonden."
+    )
+    if readable < len(targets):
+        info += " Sommige winkels blokkeren automatische bezoeken."
+    return [info]
+
+
+def resolve_promo(row, chosen_label):
+    """Geeft (aantal_kopen, aantal_betalen) voor het gekozen label, of None."""
+    if not chosen_label or chosen_label == "Geen":
+        return None
+    if chosen_label == row.get("Actie (gedetecteerd)") and row.get("Actie-aantal"):
+        return int(row["Actie-aantal"]), float(row["Actie-betaal"])
+    return PROMO_RULES.get(chosen_label)
+
+
+def promo_widget_key(token, row_id):
+    return f"promo_widget_{token}_{row_id}"
+
+
+def get_promo_choice(token, row_id, default_label):
+    choices = st.session_state.setdefault("promo_choices", {})
+    return choices.get((token, row_id), default_label)
+
+
+def remember_promo_choice(token, row_id):
+    key = promo_widget_key(token, row_id)
+    st.session_state.setdefault("promo_choices", {})[(token, row_id)] = st.session_state[key]
+
+
+def build_dataframe(rows, token):
+    """Maakt de resultaattabel en rekent de gekozen acties door."""
+    records = []
+    for row in rows:
+        record = dict(row)
+        detected = str(row.get("Actie (gedetecteerd)") or "")
+        label = get_promo_choice(token, row["ID"], detected or "Geen")
+        rule = resolve_promo(row, label)
+
+        total_promo = None
+        volume_promo = None
+        per_liter_promo = None
+        units = 1
+
+        if rule:
+            units, paid = rule
+            shipping = row["Totaal"] - row["Prijs"]
+            total_promo = paid * row["Prijs"] + shipping
+            if row["Volume (ml)"]:
+                volume_promo = units * row["Volume (ml)"]
+                per_liter_promo = total_promo / (volume_promo / 1000.0)
+
+        record["Actie"] = label
+        record["Koop-aantal"] = units
+        record["Totaal (actie)"] = total_promo
+        record["Volume (actie)"] = volume_promo
+        record["Per liter (actie)"] = per_liter_promo
+        record["Sorteerwaarde"] = per_liter_promo if per_liter_promo is not None else row["Per liter"]
+        records.append(record)
+
+    df = pd.DataFrame(records)
+    for column in (
+        "Volume (ml)", "Per liter", "Per 100 ml", "Totaal (actie)",
+        "Volume (actie)", "Per liter (actie)", "Sorteerwaarde",
+    ):
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Relevantie: houdt alleen het gezochte product over
+# ---------------------------------------------------------------------------
+
+def normalize_text(text):
+    """Kleine letters, zonder accenten of leestekens: 'K\u00e9rastase & Co' -> 'kerastase co'."""
+    decomposed = unicodedata.normalize("NFKD", str(text))
+    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    stripped = stripped.lower().replace("&", " ")
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", stripped).split())
+
+
+def query_tokens(query):
+    """Betekenisvolle woorden uit de zoekterm (zonder volume-aanduidingen en stopwoorden)."""
+    cleaned = ITEM_RE.sub(" ", str(query).lower().replace("\u00d7", "x"))
+    tokens = []
+    for tok in normalize_text(cleaned).split():
+        if tok in STOPWORDS or (len(tok) < 2 and not tok.isdigit()):
+            continue
+        if tok not in tokens:
+            tokens.append(tok)
+    return tokens
+
+
+def token_in_title(token, words, compact):
+    if token in words:
+        return True
+    return len(token) >= 4 and token in compact
+
+
+def detect_families(words, compact):
+    found = set()
+    for family, names in TYPE_FAMILIES.items():
+        for name in names:
+            if name in words or (name in SUBSTRING_OK and name in compact):
+                found.add(family)
+                break
+    return found
+
+
+def build_match_context(query, excluded_text):
+    norm_query = normalize_text(query)
+    q_words = set(norm_query.split())
+    excluded = []
+    for part in re.split(r"[,;\n]+", str(excluded_text or "")):
+        word = normalize_text(part)
+        if word and word not in excluded:
+            excluded.append(word)
+    return {
+        "tokens": query_tokens(query),
+        "families": detect_families(q_words, norm_query.replace(" ", "")),
+        "query_ml": extract_volume_ml(query),
+        "excluded": excluded,
+    }
+
+
+def judge_row(row, ctx, level):
+    """Geeft None als het resultaat past, anders een korte reden voor afwijzing."""
+    title = str(row["Product"])
+    title_norm = normalize_text(title)
+    words = set(title_norm.split())
+    compact = title_norm.replace(" ", "")
+
+    for word in ctx["excluded"]:
+        if token_in_title(word, words, compact) or word in title_norm:
+            return f"bevat uitgesloten woord '{word}'"
+    if level == "Alles":
+        return None
+
+    tokens = ctx["tokens"]
+    missing = [t for t in tokens if not token_in_title(t, words, compact)]
+    if len(missing) > len(tokens) // 5:
+        return "mist: " + ", ".join(missing[:3])
+
+    q_families = ctx["families"]
+    if q_families:
+        extra = detect_families(words, compact) - q_families
+        if "shampoo" in q_families:
+            extra.discard("gel")
+        if "gel" in q_families:
+            extra.discard("shampoo")
+        if extra:
+            return "ander producttype: " + ", ".join(sorted(extra))
+
+    if level == "Gemiddeld":
+        return None
+
+    bundle_words = [
+        w for w in BUNDLE_RE.findall(title.lower()) if w not in BUNDLE_FALSE_POSITIVES
+    ]
+    if bundle_words and not any(normalize_text(w) in tokens for w in bundle_words):
+        return f"set of bundel ('{bundle_words[0]}')"
+
+    query_ml = ctx["query_ml"]
+    volume = row.get("Volume (ml)")
+    if query_ml and volume:
+        ratio = volume / query_ml
+        nearest = round(ratio)
+        same = abs(ratio - 1) <= 0.02
+        has_count = "×" in str(row.get("Volume-berekening") or "")
+        multipack = has_count and 2 <= nearest <= 12 and abs(ratio - nearest) <= 0.02
+        if not (same or multipack):
+            return f"andere inhoud ({volume:g} ml i.p.v. {query_ml:g} ml)"
+
+    return None
+
+
+def filter_rows(rows, query, level, excluded_text=""):
+    """Splitst resultaten in (behouden, [(afgewezen_rij, reden), ...])."""
+    ctx = build_match_context(query, excluded_text)
+    kept = []
+    rejected = []
+    for row in rows:
+        reason = judge_row(row, ctx, level)
+        if reason:
+            rejected.append((row, reason))
+        else:
+            kept.append(row)
+
+    # Een live bol-prijs (API) vervangt de Google-prijs van bol.com voor hetzelfde zoekresultaat.
+    if any(r["Bron"] == "bol_api" for r in kept):
+        remaining = []
+        for row in kept:
+            is_google_bol = (
+                detect_store(str(row["Winkel"]).lower()) == "bol" and row["Bron"] != "bol_api"
+            )
+            if is_google_bol:
+                rejected.append((row, "vervangen door live bol-prijs"))
+            else:
+                remaining.append(row)
+        kept = remaining
+
+    return kept, rejected
+
+
+# ---------------------------------------------------------------------------
+# Bol.com Marketing Catalog API (optioneel, vraagt Partnerprogramma-inloggegevens)
+# ---------------------------------------------------------------------------
+
+def get_bol_token(client_id, client_secret):
+    """Haalt een OAuth-token op (en hergebruikt het tot kort voor verlopen)."""
+    cached = st.session_state.get("bol_token")
+    if cached and cached.get("client_id") == client_id and cached.get("expires", 0) > time.time() + 20:
+        return cached["token"], None
+
+    try:
+        res = requests.post(
+            BOL_TOKEN_URL,
+            params={"grant_type": "client_credentials"},
+            auth=(client_id, client_secret),
+            timeout=REQUEST_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        return None, f"bol-login mislukt: {exc}"
+
+    if res.status_code == 401:
+        return None, "bol-login geweigerd: controleer je Client ID en Client Secret."
+    if res.status_code != 200:
+        return None, f"bol-login gaf HTTP-status {res.status_code}."
+
+    try:
+        data = res.json()
+    except ValueError:
+        data = {}
+    token = data.get("access_token") if isinstance(data, dict) else None
+    if not token:
+        return None, "bol-login gaf geen token terug."
+
+    try:
+        lifetime = int(data.get("expires_in", 299))
+    except (TypeError, ValueError):
+        lifetime = 299
+    st.session_state["bol_token"] = {
+        "client_id": client_id,
+        "token": token,
+        "expires": time.time() + lifetime,
+    }
+    return token, None
+
+
+def fetch_bol_rows(query, client_id, client_secret):
+    """Zoekt op bol.com via de officiele API. Geeft (rijen, notities)."""
+    token, error = get_bol_token(client_id, client_secret)
+    if token is None:
+        return [], [error]
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "Accept-Language": "nl",
+    }
+    params = {
+        "search-term": query,
+        "country-code": "NL",
+        "page-size": BOL_PAGE_SIZE,
+        "include-offer": "true",
+    }
+    try:
+        res = requests.get(
+            f"{BOL_API_BASE}/products/search",
+            params=params,
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        return [], [f"bol-zoekopdracht mislukt: {exc}"]
+
+    if res.status_code == 401:
+        st.session_state.pop("bol_token", None)
+        return [], ["bol-API weigerde het token (401). Probeer het opnieuw."]
+    if res.status_code == 429:
+        return [], ["bol-API: te veel verzoeken (429). Wacht even en probeer opnieuw."]
+    if res.status_code != 200:
+        return [], [f"bol-zoekopdracht gaf HTTP-status {res.status_code}."]
+
+    try:
+        data = res.json()
+    except ValueError:
+        return [], ["bol-API gaf een onleesbaar antwoord."]
+
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list):
+        return [], ["bol-API gaf geen resultaten terug."]
+
+    rows = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        offer = item.get("offer")
+        if not isinstance(offer, dict):
+            continue
+        price = parse_price(offer.get("price"))
+        if price is None:
+            continue
+
+        title = str(item.get("title") or "Onbekend product")
+        description = str(item.get("description") or "")
+        raw_url = item.get("url")
+        link = clean_store_link(raw_url, "bol.com", title)
+
+        total_ml, volume_note = extract_volume_info(title)
+        if total_ml is None:
+            total_ml, volume_note = extract_volume_info(
+                f"{title} {description}", sum_segments=False
+            )
+
+        shipping_cost, shipping_text = resolve_shipping("bol.com", price, None)
+        delivery = str(offer.get("deliveryDescription") or "").strip()
+        if delivery:
+            shipping_text = f"{shipping_text} \u00b7 {delivery}"
+
+        rows.append(
+            build_row(
+                "Bol.com", title, price, link, shipping_cost, shipping_text,
+                total_ml, "bol_api", volume_note, is_direct_link(raw_url),
+            )
+        )
+
+    return rows, []
 
 
 # ---------------------------------------------------------------------------
@@ -478,10 +996,14 @@ def extract_online_sellers(detail):
     return []
 
 
-def run_search(query, api_key, deep_scan, deep_limit):
-    """Voert de zoekopdracht uit. Geeft (rijen, notities)."""
+def run_search(
+    query, api_key, deep_scan, deep_limit, check_promos=True, page_limit=DEFAULT_PAGE_CHECKS,
+    bol_id="", bol_secret="",
+):
+    """Voert de zoekopdracht uit. Geeft (rijen, waarschuwingen, infoberichten)."""
     rows = []
     notes = []
+    infos = []
     seen_items = set()
     deep_candidates = []
 
@@ -495,12 +1017,13 @@ def run_search(query, api_key, deep_scan, deep_limit):
 
     data, error = fetch_serp(params)
     if data is None:
-        return rows, [error or "Onbekende fout bij het ophalen van resultaten."]
+        notes.append(error or "Onbekende fout bij het ophalen van resultaten.")
+        data = {}
+        error = None
 
     shopping_results = data.get("shopping_results") or []
-    if not shopping_results:
+    if not shopping_results and not notes:
         notes.append(error or "Geen shopping-resultaten gevonden voor deze zoekterm.")
-        return rows, notes
 
     for item in shopping_results:
         if not isinstance(item, dict):
@@ -521,7 +1044,8 @@ def run_search(query, api_key, deep_scan, deep_limit):
             continue
         seen_items.add(item_identifier)
 
-        link = clean_store_link(pick_direct_link(item), merchant, title)
+        direct_url = pick_direct_link(item)
+        link = clean_store_link(direct_url, merchant, title)
 
         snippet = str(item.get("snippet") or "")
         ext_list = item.get("extensions")
@@ -540,7 +1064,8 @@ def run_search(query, api_key, deep_scan, deep_limit):
         rows.append(
             build_row(
                 merchant, title, numeric_price, link,
-                shipping_cost, shipping_text, total_ml, "google_shopping", volume_note,
+                shipping_cost, shipping_text, total_ml, "google_shopping",
+                volume_note, direct_url is not None,
             )
         )
 
@@ -589,29 +1114,52 @@ def run_search(query, api_key, deep_scan, deep_limit):
                 offer_merchant_lower, offer_price, shipping_raw
             )
 
-            offer_link = clean_store_link(offer.get("link"), offer_merchant, parent_title)
+            raw_offer_link = offer.get("link")
+            offer_direct = raw_offer_link if is_direct_link(raw_offer_link) else None
+            offer_link = clean_store_link(offer_direct, offer_merchant, parent_title)
 
             rows.append(
                 build_row(
                     offer_merchant, parent_title, offer_price, offer_link,
-                    shipping_cost, shipping_text, parent_ml, "google_product", parent_note,
+                    shipping_cost, shipping_text, parent_ml, "google_product",
+                    parent_note, offer_direct is not None,
                 )
             )
 
-    return rows, notes
+    if bol_id and bol_secret:
+        bol_rows, bol_notes = fetch_bol_rows(query, bol_id, bol_secret)
+        notes.extend(bol_notes)
+        if bol_rows:
+            rows.extend(bol_rows)
+            infos.append(
+                f"Bol.com: {len(bol_rows)} live aanbiedingen opgehaald via de bol API. "
+                "Verzendkosten bij bol zijn een schatting (gratis aangenomen)."
+            )
+
+    if check_promos and rows:
+        infos.extend(apply_page_promos(rows, page_limit))
+
+    for index, row in enumerate(rows):
+        row["ID"] = index
+
+    return rows, notes, infos
 
 
 # ---------------------------------------------------------------------------
 # UI-hulpfuncties
 # ---------------------------------------------------------------------------
 
-def get_serp_key_from_secrets():
+def get_secret(name):
     try:
-        if "SERPAPI_KEY" in st.secrets:
-            return str(st.secrets["SERPAPI_KEY"])
+        if name in st.secrets:
+            return str(st.secrets[name]).strip()
     except Exception:
         pass
     return ""
+
+
+def get_serp_key_from_secrets():
+    return get_secret("SERPAPI_KEY")
 
 
 def link_column():
@@ -621,15 +1169,37 @@ def link_column():
         return st.column_config.LinkColumn("Link")
 
 
-def render_cards(df):
+def render_promo_picker(row, token):
+    """Keuzelijst waarmee je per kaart een actie kunt instellen."""
+    detected = str(row["Actie (gedetecteerd)"] or "")
+    options = list(PROMO_RULES.keys())
+    if detected and detected not in options:
+        options.append(detected)
+
+    current = get_promo_choice(token, int(row["ID"]), detected or "Geen")
+    if current not in options:
+        current = "Geen"
+
+    st.selectbox(
+        "Actie",
+        options,
+        index=options.index(current),
+        key=promo_widget_key(token, int(row["ID"])),
+        on_change=remember_promo_choice,
+        args=(token, int(row["ID"])),
+        help="Kies een actie om de prijs bij aankoop van meerdere stuks te zien.",
+    )
+
+
+def render_cards(df, token):
     """Toont resultaten als kaarten, ideaal voor een smal telefoonscherm."""
     total = len(df)
     show_all = bool(st.session_state.get("show_all_cards", False))
     limit = total if show_all else min(INITIAL_CARDS, total)
 
     best_index = None
-    if df["Per liter"].notna().any():
-        best_index = df["Per liter"].idxmin()
+    if df["Sorteerwaarde"].notna().any():
+        best_index = df["Sorteerwaarde"].idxmin()
 
     for index in range(limit):
         row = df.iloc[index]
@@ -657,6 +1227,26 @@ def render_cards(df):
             st.caption(
                 f"Prijs {fmt_eur(row['Prijs'])} \u00b7 verzending: {md_escape(row['Verzending'])}"
             )
+
+            if str(row["Actie"]) != "Geen" and pd.notna(row["Totaal (actie)"]):
+                promo_line = (
+                    f"**Met actie {md_escape(row['Actie'])}** "
+                    f"(koop {int(row['Koop-aantal'])}): {fmt_eur(row['Totaal (actie)'])}"
+                )
+                if pd.notna(row["Per liter (actie)"]):
+                    promo_line += (
+                        f" \u00b7 {row['Volume (actie)']:.0f} ml"
+                        f" \u00b7 **{fmt_eur(row['Per liter (actie)'])} / L**"
+                    )
+                st.markdown(promo_line)
+
+            if str(row["Actie-tekst"]):
+                st.caption(
+                    f"Gespot op de winkelpagina: \u00ab{md_escape(row['Actie-tekst'])}\u00bb "
+                    "Controleer de voorwaarden."
+                )
+
+            render_promo_picker(row, token)
             st.markdown(f"[Open winkel \u2197]({safe_md_url(row['Link'])})")
 
     if total > limit:
@@ -670,16 +1260,23 @@ def render_table(df):
     st.dataframe(
         df,
         hide_index=True,
+        column_order=[
+            "Winkel", "Product", "Prijs", "Totaal", "Volume (ml)", "Per liter",
+            "Actie", "Per liter (actie)", "Volume-berekening", "Link",
+        ],
         column_config={
             "Product": st.column_config.TextColumn("Product", width="large"),
             "Prijs": st.column_config.NumberColumn("Prijs", format="\u20ac %.2f"),
             "Totaal": st.column_config.NumberColumn("Totaal incl. verz.", format="\u20ac %.2f"),
             "Volume (ml)": st.column_config.NumberColumn("Volume (ml)", format="%.0f"),
             "Per liter": st.column_config.NumberColumn("Per liter", format="\u20ac %.2f"),
-            "Per 100 ml": st.column_config.NumberColumn("Per 100 ml", format="\u20ac %.2f"),
+            "Per liter (actie)": st.column_config.NumberColumn(
+                "Per liter met actie", format="\u20ac %.2f"
+            ),
             "Link": link_column(),
         },
     )
+    st.caption("Een actie kies je per product in de kaartweergave.")
 
 
 def comparison_link(site, query):
@@ -701,9 +1298,25 @@ def render_comparison_links(query):
     st.markdown("**Zoek ook op:** " + " \u00b7 ".join(parts))
 
 
+def render_rejected(rejected):
+    """Toont welke resultaten zijn weggefilterd en waarom."""
+    if not rejected:
+        return
+    with st.expander(f"Afgewezen resultaten ({len(rejected)})"):
+        for row, reason in rejected[:60]:
+            st.caption(
+                f"{md_escape(row['Winkel'])} \u00b7 {md_escape(row['Product'])} "
+                f"\u00b7 {fmt_eur(row['Prijs'])} \u2014 {md_escape(reason)}"
+            )
+        if len(rejected) > 60:
+            st.caption(f"... en nog {len(rejected) - 60} andere.")
+
+
 def render_results(snipe):
     for note in snipe["notes"]:
         st.warning(note)
+    for info in snipe.get("infos", []):
+        st.caption(info)
 
     rows = snipe["rows"]
     if not rows:
@@ -711,7 +1324,32 @@ def render_results(snipe):
         render_comparison_links(snipe["query"])
         return
 
+    token = snipe["token"]
+
     st.subheader(f"Resultaten voor: {snipe['query']}")
+
+    level = st.radio("Match-niveau:", MATCH_LEVELS, horizontal=True, help=MATCH_HELP)
+    excluded_text = st.text_input(
+        "Woorden uitsluiten (optioneel):",
+        placeholder="bijv. masque, conditioner",
+        key="exclude_words",
+    )
+
+    kept, rejected = filter_rows(rows, snipe["query"], level, excluded_text)
+    if not kept and level == "Strikt":
+        relaxed_kept, relaxed_rejected = filter_rows(
+            rows, snipe["query"], "Gemiddeld", excluded_text
+        )
+        if relaxed_kept:
+            st.info("Geen exacte matches gevonden; hieronder staat het niveau 'Gemiddeld'.")
+            kept, rejected = relaxed_kept, relaxed_rejected
+
+    st.caption(f"{len(kept)} van {len(rows)} resultaten passen bij deze zoekterm.")
+    if not kept:
+        st.warning("Geen resultaten die passen. Probeer 'Gemiddeld' of 'Alles'.")
+        render_rejected(rejected)
+        render_comparison_links(snipe["query"])
+        return
 
     sort_choice = st.radio(
         "Sorteer op:",
@@ -723,24 +1361,32 @@ def render_results(snipe):
         ["Kaarten", "Tabel"],
         horizontal=True,
     )
-    sort_column = "Per liter" if sort_choice == "Prijs per liter" else "Totaal"
+    sort_column = "Sorteerwaarde" if sort_choice == "Prijs per liter" else "Totaal"
 
-    df = pd.DataFrame(rows)
+    df = build_dataframe(kept, token)
     df = df.sort_values(sort_column, ascending=True, na_position="last").reset_index(drop=True)
 
-    with_volume = df[df["Per liter"].notna()]
+    with_volume = df[df["Sorteerwaarde"].notna()]
     if not with_volume.empty:
-        best = with_volume.sort_values("Per liter").iloc[0]
+        best = with_volume.sort_values("Sorteerwaarde").iloc[0]
+        if pd.notna(best["Per liter (actie)"]):
+            promo_text = f" met actie {best['Actie']}"
+            best_total = best["Totaal (actie)"]
+            best_volume = best["Volume (actie)"]
+        else:
+            promo_text = ""
+            best_total = best["Totaal"]
+            best_volume = best["Volume (ml)"]
         st.success(
-            f"Beste deal per liter: {best['Winkel']} voor {fmt_eur(best['Per liter'])} per liter "
-            f"({fmt_eur(best['Totaal'])} totaal, {best['Volume (ml)']:.0f} ml)."
+            f"Beste deal per liter: {best['Winkel']} voor {fmt_eur(best['Sorteerwaarde'])} per liter"
+            f"{promo_text} ({fmt_eur(best_total)} totaal, {best_volume:.0f} ml)."
         )
         st.link_button("Open beste deal", best["Link"])
     else:
         st.info("Bij geen enkel resultaat kon een volume worden herkend, dus er is geen prijs per liter.")
 
     if view_choice == "Kaarten":
-        render_cards(df)
+        render_cards(df, token)
     else:
         render_table(df)
 
@@ -749,6 +1395,12 @@ def render_results(snipe):
         "Het volume wordt uit de titel afgeleid: aantallen zoals '3x' tellen mee en sets met "
         "meerdere producten worden opgeteld. Twijfel je, check dan de volume-berekening op de kaart."
     )
+    st.caption(
+        "Prijzen 'met actie' gelden alleen bij aankoop van het genoemde aantal. Bij acties over "
+        "verschillende producten is meestal het goedkoopste product gratis. Verzendkosten zijn "
+        "onveranderd gerekend."
+    )
+    render_rejected(rejected)
     render_comparison_links(snipe["query"])
 
 
@@ -779,6 +1431,18 @@ if detected_ml:
     st.caption(f"Gedetecteerd volume in zoekterm: {detected_ml:.0f} ml")
 
 with st.expander("Geavanceerd"):
+    check_promos = st.checkbox(
+        "Winkelpagina's controleren op acties (1+1 gratis e.d.)",
+        value=True,
+        help="Opent de pagina's van de beste resultaten. Kost geen API-credits, maar duurt iets langer.",
+    )
+    page_limit = st.slider(
+        "Aantal pagina's om te controleren",
+        min_value=1,
+        max_value=8,
+        value=DEFAULT_PAGE_CHECKS,
+        disabled=not check_promos,
+    )
     deep_scan = st.checkbox(
         "Diepe scan via google_product (kost 1 extra API-credit per product)",
         value=False,
@@ -790,6 +1454,18 @@ with st.expander("Geavanceerd"):
         value=3,
         disabled=not deep_scan,
     )
+    st.markdown("**Bol.com API (optioneel, voor live bol-prijzen)**")
+    bol_id = get_secret("BOL_CLIENT_ID")
+    bol_secret = get_secret("BOL_CLIENT_SECRET")
+    if bol_id and bol_secret:
+        st.caption("Bol-API gekoppeld via Secrets.")
+    else:
+        bol_id = st.text_input("bol Client ID", placeholder="Client ID")
+        bol_secret = st.text_input("bol Client Secret", type="password", placeholder="Client Secret")
+        st.caption(
+            "Aanmaken kan met een account in het bol Partnerprogramma (Open API-instellingen). "
+            "Zet ze bij voorkeur in Secrets als BOL_CLIENT_ID en BOL_CLIENT_SECRET."
+        )
 
 if st.button("Snipe Prijzen", type="primary"):
     if not serp_key:
@@ -798,14 +1474,18 @@ if st.button("Snipe Prijzen", type="primary"):
         st.warning("Vul een product-URL of een zoekterm in.")
     else:
         with st.spinner("Markt aan het doorzoeken..."):
-            result_rows, result_notes = run_search(
-                search_query.strip(), serp_key, deep_scan, deep_limit
+            result_rows, result_notes, result_infos = run_search(
+                search_query.strip(), serp_key, deep_scan, deep_limit, check_promos, page_limit,
+                bol_id.strip(), bol_secret.strip(),
             )
+        st.session_state["search_counter"] = st.session_state.get("search_counter", 0) + 1
         st.session_state["show_all_cards"] = False
         st.session_state["snipe"] = {
+            "token": st.session_state["search_counter"],
             "query": search_query.strip(),
             "rows": result_rows,
             "notes": result_notes,
+            "infos": result_infos,
         }
 
 saved_snipe = st.session_state.get("snipe")
