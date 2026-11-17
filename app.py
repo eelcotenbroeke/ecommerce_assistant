@@ -27,6 +27,8 @@ import streamlit as st
 
 SERPAPI_URL = "https://serpapi.com/search"
 REQUEST_TIMEOUT = 25
+SERP_TIMEOUT = 60
+SERP_ATTEMPTS = 2
 
 PAGE_TIMEOUT = 8
 MAX_PAGE_CHARS = 1_500_000
@@ -966,10 +968,30 @@ def fetch_bol_rows(query, client_id, client_secret):
 
 def fetch_serp(params):
     """Roept SerpApi aan. Geeft (data, foutmelding). data is None bij een harde fout."""
-    try:
-        res = requests.get(SERPAPI_URL, params=params, timeout=REQUEST_TIMEOUT)
-    except requests.RequestException as exc:
-        return None, f"Netwerkfout: {exc}"
+    res = None
+    last_error = ""
+    for attempt in range(SERP_ATTEMPTS):
+        try:
+            res = requests.get(SERPAPI_URL, params=params, timeout=SERP_TIMEOUT)
+        except requests.Timeout:
+            res = None
+            last_error = (
+                f"SerpApi reageerde niet binnen {SERP_TIMEOUT} seconden. "
+                "Probeer het over een minuutje opnieuw."
+            )
+            continue
+        except requests.RequestException as exc:
+            res = None
+            last_error = f"Netwerkfout: {exc}"
+            continue
+        if res.status_code in (500, 502, 503, 504) and attempt + 1 < SERP_ATTEMPTS:
+            last_error = f"SerpApi gaf HTTP-status {res.status_code}."
+            res = None
+            continue
+        break
+
+    if res is None:
+        return None, last_error or "SerpApi is niet bereikbaar."
 
     try:
         data = res.json()
