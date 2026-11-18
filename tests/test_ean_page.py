@@ -23,7 +23,19 @@ def network(monkeypatch):
     serp_answers = {
         "google_shopping": (
             200,
-            json.dumps({"shopping_results": [item("Flaconi.nl", 38.63), item("Celini.nl", 35.28)]}),
+            json.dumps(
+                {
+                    # the first result names the product, so Celini (default title) comes first and
+                    # Flaconi's own, different title is shown in its block
+                    "shopping_results": [
+                        item("Celini.nl", 35.28),
+                        item(
+                            "Flaconi.nl", 38.63, link="https://www.flaconi.nl/kerastase-gloss",
+                            title="Flaconi: Kérastase Gloss Absolu shampoo 500 ml", rating=4.5, reviews=120,
+                        ),
+                    ]
+                }
+            ),
         ),
         "google_immersive_product": (
             200,
@@ -33,7 +45,10 @@ def network(monkeypatch):
                         "stores": [
                             store("Celini.nl", 35.28, shipping_extracted=3.95),
                             store("Flaconi.nl", 38.63, shipping="Free"),
-                            store("bol.com", 40.0, shipping="Free"),
+                            store(
+                                "bol.com", 40.0, shipping="Free", link="https://www.bol.com/nl/p/x/9200000001/",
+                                extensions=["Op voorraad"],
+                            ),
                         ]
                     }
                 }
@@ -84,6 +99,15 @@ def search(at, text=EAN):
     return at.button(key="ean_go").click().run()
 
 
+def listed_shops(at):
+    """Shop names of the blocks in the offer list (each starts with the bold shop name)."""
+    return [m.value.split("**")[1] for m in at.markdown if m.value.startswith("**") and " \u00b7 " in m.value]
+
+
+def link_buttons(at):
+    return {b.proto.label: b.proto.url for b in at.get("link_button")}
+
+
 def serp_calls(network):
     """The searches (they cost credits); the free account lookups are not in here."""
     return [url for url in network.calls if url.startswith(fetching.SERPAPI_URL)]
@@ -119,7 +143,7 @@ def test_paste_an_ean_and_search(network):
     assert not at.exception
     assert "Flaconi.nl: € 38,63" in texts(at.success)
     assert network.calls == [SEARCH_URL, PRODUCT_URL]
-    assert len(at.dataframe) == 1
+    assert "Flaconi.nl" in listed_shops(at)
     assert "momentopname" in texts(at.caption)
 
 
@@ -141,7 +165,7 @@ def test_block_is_shown_as_an_error_without_a_table(network):
     at.text_input(key="ean_text").set_value(EAN)
     at.button(key="ean_go").click().run()
     assert "niet omzeilen" in texts(at.error)
-    assert len(at.dataframe) == 0
+    assert listed_shops(at) == []
 
 
 def test_invalid_input_is_a_warning(network):
@@ -201,7 +225,23 @@ def test_with_a_key_the_offers_come_from_google_shopping(network):
     # bol (40,00) is 3,5% above Flaconi (38,63): the owner's rule picks bol
     assert "bol.com: € 40,00" in texts(at.success)
     assert "duurder dan de goedkoopste" in texts(at.markdown)
-    assert len(at.dataframe) == 1
+    # the list: recommended shop first, then the others by total; every shop with its own details
+    assert listed_shops(at) == ["bol.com", "Flaconi.nl", "Celini.nl"]
+    markdown = texts(at.markdown)
+    assert "**bol.com** \u00b7 \u20ac 40,00 \u00b7 _Aanbevolen_" in markdown
+    assert "**Flaconi.nl** \u00b7 \u20ac 38,63 \u00b7 _Goedkoopste_" in markdown
+    assert "**Celini.nl** \u00b7 \u20ac 39,23" in markdown
+    captions = texts(at.caption)
+    assert "Prijs \u20ac 40,00 \u00b7 verzending gratis" in captions
+    assert "Prijs \u20ac 35,28 \u00b7 verzending \u20ac 3,95" in captions
+    assert "\u2605 4,5 (120 reviews)" in captions and "Op voorraad" in captions
+    assert "Flaconi: Kérastase Gloss Absolu shampoo 500 ml" in texts(at.markdown)  # the shop's own title
+    assert link_buttons(at) == {
+        "Open bol.com": "https://www.bol.com/nl/p/x/9200000001/",
+        "Open Flaconi.nl": "https://www.flaconi.nl/kerastase-gloss",
+        "Bekijk op Google Shopping": "https://www.google.com/shopping/product/111",
+    }
+    assert "Geen directe link" in captions  # Celini gave none
     assert f"Bron: Google Shopping \u00b7 Product: {TITLE}" in texts(at.caption)
     assert "controleer of de titel bij je product past" in texts(at.info)
     # the usage line is refreshed after the lookup: 12 before + this lookup's 2 searches
@@ -262,7 +302,7 @@ def test_a_rejected_key_is_an_error_without_the_key_and_is_not_remembered(networ
     assert "Invalid API key" in texts(at.error)
     assert KEY not in everything_on_screen(at)
     assert KEY not in json.dumps(at.session_state["serp_log"], default=str)
-    assert len(at.dataframe) == 0
+    assert listed_shops(at) == []
     search(at)  # a failure is not cached: the second try asks again
     assert len(serp_calls(network)) == 2
 
@@ -302,7 +342,7 @@ def test_no_search_when_the_month_is_used_up(network):
     assert not at.exception
     assert "Maandbudget bereikt: 99 van 100" in texts(at.error)
     assert serp_calls(network) == []
-    assert len(at.dataframe) == 0
+    assert listed_shops(at) == []
     assert "SerpApi deze maand: 99 van 100 gebruikt, nog 1 over" in texts(at.caption)
 
 

@@ -82,39 +82,63 @@ def test_hint_for_multipack_only_when_the_lookup_failed():
     assert view.hint(result(lookup.NOT_FOUND)) is None
 
 
-def test_offer_rows_order_and_columns():
+def test_offer_cards_order_badges_and_lines():
     res = result(
         offers=[
             offer("Ghost.nl", 20.0, deliverable=False, delivery="Niet leverbaar"),
             offer("Celini.nl", 35.28, 3.95, delivery="1-2 dagen"),
             offer("Flaconi.nl", 38.63, 0.0, delivery="2-3 dagen"),
-            offer("bol.com", 44.18, 3.95),
+            offer("bol.com", 40.0, 3.95),
         ]
     )
-    rows = view.offer_rows(res)
-    assert [r["Winkel"] for r in rows] == ["Flaconi.nl", "Celini.nl", "bol.com", "Ghost.nl"]
-    assert rows[0] == {
-        "Winkel": "Flaconi.nl",
-        "Totaal": "€ 38,63",
-        "Prijs": "€ 38,63",
-        "Verzending": "gratis",
-        "Levering": "2-3 dagen",
-        "Leverbaar": "ja",
-    }
-    assert rows[1]["Verzending"] == "€ 3,95" and rows[1]["Totaal"] == "€ 39,23"
-    # bol shows 3,95 on the page but delivery is free for the owner
-    assert rows[2]["Verzending"] == "gratis (voor jou)" and rows[2]["Totaal"] == "€ 44,18"
-    assert rows[3]["Leverbaar"] == "nee" and rows[3]["Levering"] == "Niet leverbaar"
+    cards = view.offer_cards(res)
+    # bol (40,00) is under 10% above Celini (39,23): it is recommended and listed first
+    assert [c.shop for c in cards] == ["bol.com", "Flaconi.nl", "Celini.nl", "Ghost.nl"]
+    assert [c.badge for c in cards] == ["Aanbevolen", "Goedkoopste", None, None]
+    assert cards[0].total == "\u20ac 40,00"
+    # the page says 3,95 shipping for bol, but delivery is free for the owner
+    assert cards[0].line == "Prijs \u20ac 40,00 \u00b7 verzending gratis (voor jou) \u00b7 levering 1 dag"
+    assert cards[1].line == "Prijs \u20ac 38,63 \u00b7 verzending gratis \u00b7 levering 2-3 dagen"
+    assert cards[2].line == "Prijs \u20ac 35,28 \u00b7 verzending \u20ac 3,95 \u00b7 levering 1-2 dagen"
+    assert cards[2].total == "\u20ac 39,23"
+    assert cards[3].line.startswith("Niet leverbaar \u00b7 Prijs \u20ac 20,00")
+    assert [c.deliverable for c in cards] == [True, True, True, False]
+
+
+def test_the_cheapest_is_first_and_marked_when_it_is_also_the_pick():
+    res = result(offers=[offer("Flaconi.nl", 38.63), offer("Celini.nl", 35.28, 0.0)])
+    cards = view.offer_cards(res)
+    assert [c.shop for c in cards] == ["Celini.nl", "Flaconi.nl"]
+    assert [c.badge for c in cards] == ["Aanbevolen", None]
 
 
 def test_unknown_shipping_is_shown_as_unknown():
     res = result(offers=[Offer("Shop", 30.0, None, None, True, None)])
-    row = view.offer_rows(res)[0]
-    assert row["Verzending"] == "onbekend"
-    assert row["Totaal"] == "€ 30,00 + verzending?"
-    assert row["Levering"] == "onbekend"
+    card = view.offer_cards(res)[0]
+    assert card.line == "Prijs \u20ac 30,00 \u00b7 verzending onbekend"
+    assert card.total == "\u20ac 30,00 + verzending?"
 
 
+def test_offer_card_carries_title_details_and_only_web_links():
+    linked = Offer(
+        "Flaconi.nl", 38.63, 0.0, "1 dag", True, "https://flaconi.nl/x",
+        "Flaconi Kerastase Gloss 500 ml", ("\u2605 4,5 (12 reviews)", "Op voorraad"),
+    )
+    card = view.offer_cards(result(offers=[linked]))[0]
+    assert card.url == "https://flaconi.nl/x"
+    assert card.title == "Flaconi Kerastase Gloss 500 ml"
+    assert card.details == ("\u2605 4,5 (12 reviews)", "Op voorraad")
+    for url in (None, "", "javascript:alert(1)", "/relatief"):
+        bad = Offer("Flaconi.nl", 38.63, 0.0, "1 dag", True, url)
+        assert view.offer_cards(result(offers=[bad]))[0].url is None
+
+
+def test_shop_title_is_left_out_when_it_is_the_product_title():
+    same = Offer("A", 10.0, 0.0, None, True, None, "K\u00e9rastase  Gloss, 500 ml")
+    other = Offer("B", 11.0, 0.0, None, True, None, "Gloss Absolu navulling")
+    res = result(offers=[same, other], product_title="Kerastase Gloss 500 ML")
+    # accents, case, spaces and punctuation do not make a title "different"
+    assert [c.title for c in view.offer_cards(res)] == [None, "Gloss Absolu navulling"]
 def test_source_line_names_the_source_and_the_product():
     res = result(source="Google Shopping", product_title="Shampoo 500 ml")
     assert view.source_line(res) == "Bron: Google Shopping \u00b7 Product: Shampoo 500 ml"
@@ -126,12 +150,3 @@ def test_product_link_label_follows_the_source():
     assert view.product_link_label(result(source="Google Shopping")) == "Bekijk op Google Shopping"
     assert view.product_link_label(result(source="Beslist")) == "Bekijk op Beslist"
     assert view.product_link_label(result()) == "Bekijk product"
-
-
-def test_pick_link_only_for_a_web_link_of_the_recommended_offer():
-    linked = Offer("Flaconi.nl", 38.63, 0.0, "1 dag", True, "https://flaconi.nl/x")
-    assert view.pick_link(result(offers=[linked])) == ("Open Flaconi.nl", "https://flaconi.nl/x")
-    for url in (None, "", "javascript:alert(1)", "/relatief"):
-        unlinked = Offer("Flaconi.nl", 38.63, 0.0, "1 dag", True, url)
-        assert view.pick_link(result(offers=[unlinked])) is None
-    assert view.pick_link(result()) is None

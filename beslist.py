@@ -91,7 +91,9 @@ class Offer:
     shipping: float | None  # EUR; None when the page does not say
     delivery: str | None  # delivery text as shown, e.g. "1-2 dagen"
     deliverable: bool  # in stock AND not marked as undeliverable
-    url: str | None  # Beslist redirect link to the shop
+    url: str | None  # link to the shop's page for this product, when the source gives one
+    title: str | None = None  # the product as this shop lists it, when the source says
+    details: tuple[str, ...] = ()  # short facts for the list: rating, stock, remarks
 
     @property
     def total(self):

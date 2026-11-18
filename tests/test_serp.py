@@ -241,3 +241,70 @@ def test_guard_that_says_none_lets_the_search_run():
     source = serp.serp_source(fake, now=lambda: "NOW", guard=lambda: None)
     assert lookup.lookup(EAN, None, source=source).status == lookup.OK
     assert [call["engine"] for call in fake.calls] == ["google_shopping", "google_immersive_product"]
+
+
+# ------------------------------------------------------------------ title, details and links per offer
+
+
+def test_offers_carry_the_shops_title_details_and_link():
+    fake = FakeSerp(
+        shopping=[
+            item(
+                "Flaconi.nl", 38.63, delivery="Gratis levering morgen", link="https://flaconi.nl/p/1",
+                title="Flaconi: K\u00e9rastase Gloss 500 ml", rating=4.5, reviews=120,
+                extensions=["Op voorraad", "Gratis levering morgen"], snippet="Voor glans en zachtheid.",
+            )
+        ],
+        stores=[],
+    )
+    offer = run(fake).offers[0]
+    assert offer.title == "Flaconi: K\u00e9rastase Gloss 500 ml"
+    assert offer.url == "https://flaconi.nl/p/1"
+    # the delivery text is shown on its own line, so it is not repeated in the details
+    assert offer.details == ("\u2605 4,5 (120 reviews)", "Op voorraad", "Voor glans en zachtheid.")
+
+
+def test_store_offer_borrows_what_it_lacks_from_the_same_shops_result():
+    fake = FakeSerp(
+        shopping=[item("Flaconi.nl", 38.63, link="https://flaconi.nl/p/1", title="Flaconi titel", rating=4.0)],
+        stores=[store("Flaconi.nl", 38.63, shipping="Free")],
+    )
+    offer = run(fake).offers[0]
+    assert offer.shipping == 0.0  # the store list still decides shipping and price
+    assert (offer.url, offer.title, offer.details) == ("https://flaconi.nl/p/1", "Flaconi titel", ("\u2605 4,0",))
+
+
+def test_store_offer_keeps_its_own_link_title_and_details():
+    fake = FakeSerp(
+        shopping=[item("Flaconi.nl", 38.63, link="https://flaconi.nl/oud", title="oud", rating=1.0)],
+        stores=[
+            store(
+                "Flaconi.nl", 38.63, shipping="Free", link="https://flaconi.nl/nieuw",
+                title="nieuw", extensions=["Op voorraad"],
+            )
+        ],
+    )
+    offer = run(fake).offers[0]
+    assert (offer.url, offer.title, offer.details) == ("https://flaconi.nl/nieuw", "nieuw", ("Op voorraad",))
+
+
+def test_details_are_short_deduplicated_and_capped():
+    long_text = "x" * 400
+    fake = FakeSerp(
+        shopping=[
+            item(
+                "Flaconi.nl", 38.63, rating=9, extensions=["A", "a", "B", "C", "D"], snippet=long_text,
+            )
+        ],
+        stores=[],
+    )
+    offer = run(fake).offers[0]
+    assert "\u2605" not in "".join(offer.details)  # 9 is not a star rating
+    assert offer.details == ("A", "B", "C", "D")  # "a" repeats "A"; capped at four
+    only_long = run(FakeSerp(shopping=[item("Flaconi.nl", 38.63, snippet=long_text)], stores=[])).offers[0]
+    assert len(only_long.details[0]) == 160 and only_long.details[0].endswith("\u2026")
+
+
+def test_javascript_or_http_links_are_not_kept():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63, link="javascript:alert(1)")], stores=[])
+    assert run(fake).offers[0].url is None

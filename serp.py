@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import replace
 from datetime import datetime
 
 from beslist import Offer, is_undeliverable_text
@@ -105,6 +106,42 @@ def _texts(value):
 # --------------------------------------------------------------------------- offers
 
 
+MAX_DETAILS = 4
+MAX_DETAIL_CHARS = 160
+
+
+def _clip(text, limit=MAX_DETAIL_CHARS):
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "\u2026"
+
+
+def _details(entry, skip=()):
+    """Short facts about an offer for the list: rating, extensions, description. Deduplicated."""
+    facts = []
+    rating = _finite(entry.get("rating"))
+    if rating is not None and 0 < rating <= 5:
+        text = "\u2605 " + f"{rating:.1f}".replace(".", ",")
+        reviews = _finite(entry.get("reviews"))
+        if reviews is not None and reviews >= 1:
+            text += f" ({int(reviews)} reviews)"
+        facts.append(text)
+    facts.extend(_texts(entry.get("extensions")))
+    if entry.get("snippet"):
+        facts.append(str(entry["snippet"]))
+    seen = {str(text).strip().lower() for text in skip if text}
+    result = []
+    for fact in facts:
+        fact = _clip(fact)
+        if fact and fact.lower() not in seen:
+            seen.add(fact.lower())
+            result.append(fact)
+    return tuple(result[:MAX_DETAILS])
+
+
+def _title(entry):
+    return _clip(entry["title"], 200) if entry.get("title") else None
+
+
 def offer_from_item(item):
     """An Offer from one `shopping_results` entry, or None."""
     shop = str(item.get("source") or "").strip()
@@ -114,7 +151,16 @@ def offer_from_item(item):
     delivery = str(item.get("delivery") or "").strip() or None
     extensions = _texts(item.get("extensions"))
     deliverable = not any(is_undeliverable_text(text) for text in [delivery, *extensions])
-    return Offer(shop, price, parse_shipping(delivery), delivery, deliverable, _https(item.get("link")))
+    return Offer(
+        shop,
+        price,
+        parse_shipping(delivery),
+        delivery,
+        deliverable,
+        _https(item.get("link")),
+        _title(item),
+        _details(item, skip=[delivery]),
+    )
 
 
 def offer_from_store(store):
@@ -136,6 +182,8 @@ def offer_from_store(store):
         delivery,
         deliverable,
         _https(store.get("link")),
+        _title(store),
+        _details(store, skip=[delivery]),
     )
 
 
@@ -160,6 +208,25 @@ def _add(offers, offer):
     key = offer.shop.lower()
     if key not in offers or offer.total < offers[key].total:
         offers[key] = offer
+
+
+def _fill_from_items(offers, items):
+    """A store offer without title, link or details borrows them from the same shop's result."""
+    by_shop = {}
+    for item in items:
+        offer = offer_from_item(item)
+        if offer is not None:
+            by_shop.setdefault(offer.shop.lower(), offer)
+    for key, offer in list(offers.items()):
+        other = by_shop.get(key)
+        if other is None:
+            continue
+        offers[key] = replace(
+            offer,
+            url=offer.url or other.url,
+            title=offer.title or other.title,
+            details=offer.details or other.details,
+        )
 
 
 # --------------------------------------------------------------------------- the source
@@ -222,6 +289,7 @@ def serp_source(fetch_json, now=datetime.now, guard=None):
                 steps.append(f"Winkellijst: {len(stores)} winkels")
                 for store in stores:
                     _add(offers, offer_from_store(store))
+        _fill_from_items(offers, chosen)
         stores_seen = set(offers)
         for item in chosen:
             offer = offer_from_item(item)
