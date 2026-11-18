@@ -139,11 +139,19 @@ def test_shop_title_is_left_out_when_it_is_the_product_title():
     res = result(offers=[same, other], product_title="Kerastase Gloss 500 ML")
     # accents, case, spaces and punctuation do not make a title "different"
     assert [c.title for c in view.offer_cards(res)] == [None, "Gloss Absolu navulling"]
-def test_source_line_names_the_source_and_the_product():
-    res = result(source="Google Shopping", product_title="Shampoo 500 ml")
-    assert view.source_line(res) == "Bron: Google Shopping \u00b7 Product: Shampoo 500 ml"
+def test_source_line_names_the_searched_ean_and_the_source():
+    res = result(source="Google Shopping", ean="3474637283414", product_title="Shampoo 500 ml")
+    assert view.source_line(res) == "Gezocht op EAN 3474637283414 \u00b7 Bron: Google Shopping"
     assert view.source_line(result(source="Beslist")) == "Bron: Beslist"
+    assert view.source_line(result(ean="3474637283414")) == "Gezocht op EAN 3474637283414"
     assert view.source_line(result()) is None
+
+
+def test_product_line_names_the_found_product():
+    res = result(source="Google Shopping", product_title="Shampoo 500 ml")
+    assert view.product_line(res) == "Product volgens Google Shopping: **Shampoo 500 ml**"
+    assert view.product_line(result(product_title="Shampoo")) == "Product: **Shampoo**"
+    assert view.product_line(result(source="Google Shopping")) is None
 
 
 def test_product_link_label_follows_the_source():

@@ -53,13 +53,21 @@ def explanation(result):
     return "De goedkoopste leverbare optie, inclusief verzending."
 
 
+def product_line(result):
+    """Which product the source found, for the owner to check against the one he wants."""
+    if not result.product_title:
+        return None
+    where = f" volgens {result.source}" if result.source else ""
+    return f"Product{where}: **{result.product_title}**"
+
+
 def source_line(result):
-    """Where the offers came from and which product that is, for the owner to check."""
+    """Which barcode was searched and where the offers came from."""
     parts = []
+    if result.ean:
+        parts.append(f"Gezocht op EAN {result.ean}")
     if result.source:
         parts.append(f"Bron: {result.source}")
-    if result.product_title:
-        parts.append(f"Product: {result.product_title}")
     return " \u00b7 ".join(parts) or None
 
 
