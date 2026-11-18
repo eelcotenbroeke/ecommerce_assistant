@@ -39,14 +39,14 @@ def normalize_gtin(raw):
     Accepts EAN-8, UPC-A (12), EAN-13 and GTIN-14. A 12-digit UPC is padded to 13 digits and a
     14-digit GTIN with a leading zero is shortened to 13, so the same product compares equal.
     Spaces, hyphens and invisible direction marks are ignored. Wrong length or a wrong check
-    digit gives None.
+    digit, or all zeros, gives None.
     """
     if raw is None:
         return None
     text = re.sub(r"[\s\-]", "", _INVISIBLE_RE.sub("", str(raw)))
     if not re.fullmatch(r"[0-9]+", text) or len(text) not in _GTIN_LENGTHS:
         return None
-    if not _check_digit_ok(text):
+    if not _check_digit_ok(text) or not text.strip("0"):  # all zeros has a valid check digit
         return None
     if len(text) == 14 and text.startswith("0"):
         return text[1:]
