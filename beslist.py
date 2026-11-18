@@ -253,14 +253,10 @@ def _to_offer(node):
     )
 
 
-def parse_offers(html):
-    """All offers on a Beslist product page, in page order. Empty list when nothing reliable.
-
-    Offers without a usable price, shop name or EUR currency are dropped. An offer whose
-    availability is missing or not an in-stock value is kept but marked not deliverable.
-    """
+def _product_node(html):
+    """The single Product (with offers) in the page's JSON-LD, or None when absent/ambiguous."""
     if not html:
-        return []
+        return None
     scan = _LdScan()
     try:
         scan.feed(html)
@@ -268,10 +264,41 @@ def parse_offers(html):
     except Exception:  # noqa: BLE001 - malformed markup must never crash a price lookup
         pass
     products = _products_with_offers(scan.blocks)
-    if len(products) != 1:
+    return products[0] if len(products) == 1 else None
+
+
+def parse_offers(html):
+    """All offers on a Beslist product page, in page order. Empty list when nothing reliable.
+
+    Offers without a usable price, shop name or EUR currency are dropped. An offer whose
+    availability is missing or not an in-stock value is kept but marked not deliverable.
+    """
+    product = _product_node(html)
+    if product is None:
         return []
-    offers = (_to_offer(node) for node in _offer_nodes(products[0]["offers"]))
+    offers = (_to_offer(node) for node in _offer_nodes(product["offers"]))
     return [offer for offer in offers if offer is not None]
+
+
+_GTIN_KEYS = ("gtin13", "gtin", "gtin14", "gtin12", "gtin8")
+
+
+def product_ean(html):
+    """The validated barcode the Beslist page itself states for its product, or None.
+
+    Use it to check that the page really is the product you asked for: the live product page
+    carries "gtin13" in its JSON-LD next to the offers.
+    """
+    product = _product_node(html)
+    if product is None:
+        return None
+    for key in _GTIN_KEYS:
+        value = product.get(key)
+        if isinstance(value, (str, int)) and not isinstance(value, bool):
+            gtin = normalize_gtin(value)
+            if gtin:
+                return gtin
+    return None
 
 
 def rank_offers(offers):

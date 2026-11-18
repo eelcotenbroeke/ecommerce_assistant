@@ -8,6 +8,7 @@ from beslist import (
     best_offer,
     find_product_url,
     parse_offers,
+    product_ean,
     rank_offers,
     search_url,
 )
@@ -311,7 +312,7 @@ def test_total_rounds_cleanly():
 
 SEARCH_PAGE = f"""
 <html><body>
-  <a href="/p/andere-shampoo-250ml/286/3600523298130/">Andere</a>
+  <a href="/p/andere-shampoo-250ml/286/3600523298136/">Andere</a>
   <a href="/p/kerastase-gloss-absolu-bain-hydra-glaze-shampoo-500ml/286/{EAN}/">Kerastase</a>
   <a href="/c/shampoo/">Shampoo</a>
 </body></html>
@@ -337,7 +338,7 @@ def test_find_product_url_accepts_absolute_beslist_links_and_gtin14():
 
 
 def test_find_product_url_never_returns_another_product():
-    html = '<a href="/p/andere/286/3600523298130/">Andere</a>'
+    html = '<a href="/p/andere/286/3600523298136/">Andere</a>'
     assert find_product_url(html, EAN) is None
 
 
@@ -355,3 +356,28 @@ def test_find_product_url_invalid_barcode():
     assert find_product_url(SEARCH_PAGE, "1234567890123") is None
     assert find_product_url(SEARCH_PAGE, None) is None
 
+
+
+# ------------------------------------------------------------------ product_ean
+
+
+def test_product_ean_reads_gtin13_next_to_the_offers():
+    product = make_product()
+    product["gtin13"] = EAN
+    assert product_ean(page(product)) == EAN
+
+
+def test_product_ean_normalises_and_validates():
+    product = make_product()
+    product["gtin"] = "0" + EAN
+    assert product_ean(page(product)) == EAN
+    product = make_product()
+    product["gtin13"] = "3474637283415"  # wrong check digit
+    assert product_ean(page(product)) is None
+
+
+def test_product_ean_none_without_barcode_or_product():
+    assert product_ean(page(make_product())) is None
+    assert product_ean(page(make_product(), make_product())) is None
+    assert product_ean(None) is None
+    assert product_ean("<html></html>") is None
