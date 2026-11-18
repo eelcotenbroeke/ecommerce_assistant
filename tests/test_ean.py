@@ -69,6 +69,8 @@ def test_normalize_gtin_accepts(raw, expected):
         "12345",  # too short
         "54125309561630000",  # too long
         "ABC1234567890",  # not digits
+        "0000000000000",  # all zeros passes the check digit but is not a product
+        "00000000",
         "",
         None,
     ],
