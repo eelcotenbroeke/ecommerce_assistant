@@ -25,7 +25,8 @@ from ean import extract_ids, normalize_gtin, parse_product_url
 
 PAUSE_SECONDS = 2.0  # between the two requests to Beslist
 SAMPLE_EAN = "3474637283414"  # a product known to be on Beslist, for connection tests
-_BLOCK_STATUSES = {401, 403, 429, 451}
+# 202 is what AWS WAF sends for a bot check ("challenge"): a small page instead of the real one.
+_BLOCK_STATUSES = {202, 401, 403, 429, 451}
 
 # Statuses: "ok" and "unavailable" mean the chain worked; the rest say what went wrong.
 OK = "ok"
@@ -66,6 +67,8 @@ def _describe(label, status, text):
 def _failure(site, status, text):
     if status is None:
         return f"Geen antwoord van {site} ({text})."
+    if status == 202:
+        return f"{site} toont een controlepagina (HTTP 202) in plaats van de pagina: bot-controle."
     return f"{site} gaf HTTP {status}."
 
 
