@@ -49,7 +49,6 @@ Read through `st.secrets`: `SERPAPI_KEY`, `BOL_CLIENT_ID`, `BOL_CLIENT_SECRET`. 
 ## Known issues (assessment of 2026-11-17)
 
 - SerpApi route (2026-11-18): unverified against a live answer; every lookup costs 2 searches (the screen caches a worked lookup for 15 minutes per session and counts calls). Shipping is often unknown from Google (shown as "onbekend", never guessed).
-
 - The `google_product` deep scan is dead (Google shut the service down; SerpApi points to the Immersive Product API). Not migrated.
 - `google_shopping` results may lack a direct merchant link, so the page-level promo check probably rarely runs. Needs one raw SerpApi response to confirm.
 - Shipping is mostly guessed. The volume parser has no grams/ounces and misses "1,5 L x 6" and "duopack".
