@@ -165,10 +165,18 @@ def _add(offers, offer):
 # --------------------------------------------------------------------------- the source
 
 
-def serp_source(fetch_json, now=datetime.now):
-    """Offers source for lookup.lookup: Google Shopping by EAN through SerpApi."""
+def serp_source(fetch_json, now=datetime.now, guard=None):
+    """Offers source for lookup.lookup: Google Shopping by EAN through SerpApi.
+
+    `guard()` runs before the first search: it returns None to go ahead, or a Dutch reason (for
+    instance "monthly budget reached") and then nothing is searched.
+    """
 
     def source(ean, steps):
+        reason = guard() if guard else None
+        if reason:
+            steps.append("Google Shopping: niet gezocht (budget)")
+            return Failure(SOURCE_ERROR, reason, SOURCE_NAME)
         data, error = fetch_json({"engine": "google_shopping", "q": ean, "hl": "nl", "gl": "nl"})
         if data is None:
             steps.append("Google Shopping: geen antwoord")

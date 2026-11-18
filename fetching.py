@@ -101,3 +101,30 @@ def serp_fetcher(api_key, recorder=None, timeout=60, fetch=None):
         return data, error
 
     return fetch_json
+
+
+SERPAPI_ACCOUNT_URL = "https://serpapi.com/account.json"
+
+
+def serp_account(api_key, timeout=15, fetch=None):
+    """SerpApi's Account API: `(data, error)` with this month's usage. Free, not a search.
+
+    The answer repeats the API key and the owner's e-mail address; the key is dropped here and
+    callers keep only the numbers they need (budget.parse_account).
+    """
+    query = urllib.parse.urlencode({"api_key": api_key})
+    status, text = (fetch or fetch_url)(
+        f"{SERPAPI_ACCOUNT_URL}?{query}", timeout=timeout, accept="application/json"
+    )
+    if status is None:
+        return None, _redact(f"Netwerkfout: {text}", api_key)
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        parsed = None
+    if not isinstance(parsed, dict):
+        return None, f"SerpApi gaf HTTP {status} zonder leesbaar antwoord."
+    if status != 200 or parsed.get("error"):
+        return None, _redact(parsed.get("error") or f"SerpApi gaf HTTP {status}.", api_key)
+    parsed.pop("api_key", None)
+    return parsed, None
