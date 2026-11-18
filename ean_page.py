@@ -16,6 +16,7 @@ import time
 from datetime import datetime
 
 import streamlit as st
+from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 import budget
 import fetching
@@ -141,6 +142,9 @@ def _show(result):
         st.info(tip)
     for card in lookup_view.offer_cards(result):
         _offer_block(card)
+    product = lookup_view.product_line(result)
+    if product:
+        st.markdown(product)
     line = lookup_view.source_line(result)
     if line:
         st.caption(line)
@@ -200,6 +204,11 @@ def _connection_test(using_serp):
 
 
 def render():
+    if get_script_run_ctx() is None:
+        # `import app` (the tests do that to reach the pure helpers) runs this script without a
+        # Streamlit session; a form created there leaks into the next AppTest ("forms cannot be
+        # nested"). There is nothing to show without a session anyway.
+        return
     st.title("\U0001f3af Prijscheck via EAN")
     st.caption("Plak een bol-link of een EAN. Bij een Amazon-link plak je de EAN zelf.")
     using_serp = bool(_api_key())
@@ -212,8 +221,11 @@ def render():
         )
 
     shared = (st.query_params.get("url") or "").strip()
-    text = st.text_input("bol-link of EAN", value=shared, key="ean_text", placeholder="Plak hier")
-    clicked = st.button("Zoek beste aanbieding", type="primary", key="ean_go")
+    # In a form the keyboard's Enter key searches too, and the text is only read when the button
+    # is tapped: outside a form a phone could show the result of the previous input.
+    form = st.form("ean_form")
+    text = form.text_input("bol-link of EAN", value=shared, key="ean_text", placeholder="Plak hier")
+    clicked = form.form_submit_button("Zoek beste aanbieding", type="primary")
 
     if st.session_state.pop("ean_force", False) and st.session_state.get("ean_last"):
         _run(st.session_state["ean_last"], fresh=True)

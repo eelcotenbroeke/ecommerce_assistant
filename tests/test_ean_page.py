@@ -97,9 +97,14 @@ def start(key=None, limit="100"):
     return at.run()
 
 
+def go_button(at):
+    """The search button (inside a form, so it is found by its label)."""
+    return next(b for b in at.button if b.label == "Zoek beste aanbieding")
+
+
 def search(at, text=EAN):
     at.text_input(key="ean_text").set_value(text)
-    return at.button(key="ean_go").click().run()
+    return go_button(at).click().run()
 
 
 def listed_shops(at):
@@ -142,7 +147,7 @@ def test_old_search_is_still_available(network):
 def test_paste_an_ean_and_search(network):
     at = start()
     at.text_input(key="ean_text").set_value(EAN)
-    at.button(key="ean_go").click().run()
+    go_button(at).click().run()
     assert not at.exception
     assert "Flaconi.nl: € 38,63" in texts(at.success)
     assert network.calls == [SEARCH_URL, PRODUCT_URL]
@@ -166,7 +171,7 @@ def test_block_is_shown_as_an_error_without_a_table(network):
     network.answers[SEARCH_URL] = (403, "nee")
     at = start()
     at.text_input(key="ean_text").set_value(EAN)
-    at.button(key="ean_go").click().run()
+    go_button(at).click().run()
     assert "niet omzeilen" in texts(at.error)
     assert listed_shops(at) == []
 
@@ -174,7 +179,7 @@ def test_block_is_shown_as_an_error_without_a_table(network):
 def test_invalid_input_is_a_warning(network):
     at = start()
     at.text_input(key="ean_text").set_value("shampoo")
-    at.button(key="ean_go").click().run()
+    go_button(at).click().run()
     assert "bol-productlink of een EAN" in texts(at.warning)
     assert network.calls == []
 
@@ -182,7 +187,7 @@ def test_invalid_input_is_a_warning(network):
 def test_amazon_link_asks_for_the_ean(network):
     at = start()
     at.text_input(key="ean_text").set_value("https://www.amazon.nl/dp/B01M635J8I")
-    at.button(key="ean_go").click().run()
+    go_button(at).click().run()
     assert "Global Trade Identification Number" in texts(at.warning)
     assert network.calls == []
 
@@ -245,7 +250,8 @@ def test_with_a_key_the_offers_come_from_google_shopping(network):
         "Bekijk op Google Shopping": "https://www.google.com/shopping/product/111",
     }
     assert "Geen directe link" in captions  # Celini gave none
-    assert f"Bron: Google Shopping \u00b7 Product: {TITLE}" in texts(at.caption)
+    assert f"Product volgens Google Shopping: **{TITLE}**" in texts(at.markdown)
+    assert f"Gezocht op EAN {EAN} \u00b7 Bron: Google Shopping" in texts(at.caption)
     assert "controleer of de titel bij je product past" in texts(at.info)
     # the usage line is refreshed after the lookup: 12 before + this lookup's 2 searches
     assert "SerpApi deze maand: 14 van 100 gebruikt, nog 86 over" in texts(at.caption)
@@ -405,3 +411,35 @@ def test_without_a_limit_secret_the_default_of_250_applies(network):
     search(at)
     assert len(serp_calls(network)) == 2
     assert not at.error
+
+
+# ------------------------------------------------------------------ which input a result belongs to
+
+
+def test_the_result_names_the_ean_that_was_searched(network):
+    network.serp_answers["google_shopping"] = (
+        200,
+        json.dumps({"shopping_results": [item("Celini.nl", 35.28, title="KitchenAid Artisan mixer", product_id="9")]}),
+    )
+    at = start(KEY)
+    search(at, "8710103000000")  # invalid check digit: a warning, nothing searched
+    assert serp_calls(network) == []
+    search(at, EAN)
+    assert f"Gezocht op EAN {EAN}" in texts(at.caption)
+    assert "Product volgens Google Shopping: **KitchenAid Artisan mixer**" in texts(at.markdown)
+
+
+def test_a_new_input_replaces_the_old_result(network):
+    at = start(KEY)
+    search(at, EAN)
+    assert f"Gezocht op EAN {EAN}" in texts(at.caption)
+    other = "3600523298136"
+    network.serp_answers["google_shopping"] = (
+        200,
+        json.dumps({"shopping_results": [item("Celini.nl", 12.0, title="Heel ander product", product_id="7")]}),
+    )
+    search(at, other)
+    assert f"Gezocht op EAN {other}" in texts(at.caption)
+    assert f"Gezocht op EAN {EAN}" not in texts(at.caption)
+    assert "Product volgens Google Shopping: **Heel ander product**" in texts(at.markdown)
+    assert len(serp_calls(network)) == 4  # two lookups of two searches each
