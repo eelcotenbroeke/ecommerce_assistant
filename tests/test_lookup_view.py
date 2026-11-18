@@ -37,6 +37,7 @@ def test_eur(value, expected):
         (lookup.INVALID_INPUT, "warning"),
         (lookup.BLOCKED, "error"),
         (lookup.MISMATCH, "error"),
+        (lookup.SOURCE_ERROR, "error"),
     ],
 )
 def test_severity(status, expected):
@@ -112,3 +113,25 @@ def test_unknown_shipping_is_shown_as_unknown():
     assert row["Verzending"] == "onbekend"
     assert row["Totaal"] == "€ 30,00 + verzending?"
     assert row["Levering"] == "onbekend"
+
+
+def test_source_line_names_the_source_and_the_product():
+    res = result(source="Google Shopping", product_title="Shampoo 500 ml")
+    assert view.source_line(res) == "Bron: Google Shopping \u00b7 Product: Shampoo 500 ml"
+    assert view.source_line(result(source="Beslist")) == "Bron: Beslist"
+    assert view.source_line(result()) is None
+
+
+def test_product_link_label_follows_the_source():
+    assert view.product_link_label(result(source="Google Shopping")) == "Bekijk op Google Shopping"
+    assert view.product_link_label(result(source="Beslist")) == "Bekijk op Beslist"
+    assert view.product_link_label(result()) == "Bekijk product"
+
+
+def test_pick_link_only_for_a_web_link_of_the_recommended_offer():
+    linked = Offer("Flaconi.nl", 38.63, 0.0, "1 dag", True, "https://flaconi.nl/x")
+    assert view.pick_link(result(offers=[linked])) == ("Open Flaconi.nl", "https://flaconi.nl/x")
+    for url in (None, "", "javascript:alert(1)", "/relatief"):
+        unlinked = Offer("Flaconi.nl", 38.63, 0.0, "1 dag", True, url)
+        assert view.pick_link(result(offers=[unlinked])) is None
+    assert view.pick_link(result()) is None

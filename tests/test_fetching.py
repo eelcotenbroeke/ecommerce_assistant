@@ -1,5 +1,6 @@
 import gzip
 import io
+import json
 import urllib.error
 
 import fetching
@@ -57,3 +58,87 @@ def test_fetch_url_connection_error_returns_none_and_message(monkeypatch):
     status, text = fetching.fetch_url("https://example.test/")
     assert status is None
     assert "geen verbinding" in text
+
+
+# ------------------------------------------------------------------ serp_fetcher
+
+KEY = "sekrit-key-123"
+
+
+def serp_with(status, body, recorder=None):
+    seen = []
+
+    def fake_fetch(url, timeout=20, accept="text/html"):
+        seen.append((url, timeout, accept))
+        return status, body
+
+    return fetching.serp_fetcher(KEY, recorder=recorder, fetch=fake_fetch), seen
+
+
+def test_serp_fetcher_puts_the_key_in_the_request_only():
+    fetch_json, seen = serp_with(200, json.dumps({"shopping_results": []}))
+    data, error = fetch_json({"engine": "google_shopping", "q": "3474637283414", "hl": "nl"})
+    assert (data, error) == ({"shopping_results": []}, None)
+    url, timeout, accept = seen[0]
+    assert url.startswith(fetching.SERPAPI_URL + "?")
+    assert "api_key=" + KEY in url
+    assert "engine=google_shopping" in url and "q=3474637283414" in url
+    assert accept == "application/json"
+    assert timeout == 60
+
+
+def test_serp_fetcher_error_answers_have_no_key_and_no_data():
+    body = json.dumps({"error": f"Invalid API key {KEY}."})
+    fetch_json, _ = serp_with(401, body)
+    data, error = fetch_json({"engine": "google_shopping"})
+    assert data is None
+    assert error == "Invalid API key ***."
+
+
+def test_serp_fetcher_ok_answer_that_carries_an_error_keeps_the_data():
+    fetch_json, _ = serp_with(200, json.dumps({"error": "Google hasn't returned any results.", "x": 1}))
+    data, error = fetch_json({"engine": "google_shopping"})
+    assert data == {"error": "Google hasn't returned any results.", "x": 1}
+    assert error == "Google hasn't returned any results."
+
+
+def test_serp_fetcher_unreadable_answer_and_network_error():
+    fetch_json, _ = serp_with(502, "<html>bad gateway</html>")
+    assert fetch_json({}) == (None, "SerpApi gaf HTTP 502 zonder leesbaar antwoord.")
+    fetch_json, _ = serp_with(200, json.dumps([1, 2]))
+    assert fetch_json({})[0] is None
+    fetch_json, _ = serp_with(None, f"timed out at https://serpapi.com/search.json?api_key={KEY}")
+    data, error = fetch_json({})
+    assert data is None
+    assert error.startswith("Netwerkfout: ") and KEY not in error
+
+
+def test_serp_fetcher_recorder_gets_params_without_key_and_redacted_answers():
+    recorded = []
+    fetch_json, _ = serp_with(200, json.dumps({"search_metadata": {"note": f"key {KEY}"}}), lambda *args: recorded.append(args))
+    fetch_json({"engine": "google_shopping", "q": "1"})
+    [(params, data, error)] = recorded
+    assert params == {"engine": "google_shopping", "q": "1"}
+    assert data == {"search_metadata": {"note": "key ***"}}
+    assert error is None
+    assert KEY not in json.dumps(recorded)
+
+
+def test_serp_fetcher_makes_one_attempt_only():
+    fetch_json, seen = serp_with(500, json.dumps({"error": "boom"}))
+    fetch_json({"engine": "google_shopping"})
+    assert len(seen) == 1
+
+
+def test_fetch_url_accept_header(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen["accept"] = request.get_header("Accept")
+        return FakeResponse(200, b"{}")
+
+    monkeypatch.setattr(fetching.urllib.request, "urlopen", fake_urlopen)
+    fetching.fetch_url("https://example.test/", accept="application/json")
+    assert seen["accept"] == "application/json"
+    fetching.fetch_url("https://example.test/")
+    assert seen["accept"] == "text/html"
