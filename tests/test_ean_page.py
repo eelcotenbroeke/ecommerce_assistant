@@ -87,10 +87,13 @@ def network(monkeypatch):
 KEY = "sekrit-key-123"
 
 
-def start(key=None):
+def start(key=None, limit="100"):
+    """The screen with a key; the monthly limit is set explicitly (None: the default)."""
     at = AppTest.from_file(APP_PATH, default_timeout=60)
     if key:
         at.secrets["SERPAPI_KEY"] = key
+        if limit:
+            at.secrets["SERPAPI_MONTHLY_LIMIT"] = limit
     return at.run()
 
 
@@ -393,3 +396,12 @@ def test_unknown_usage_does_not_block_and_is_said(network):
     search(at)
     assert len(serp_calls(network)) == 2
     assert "Google Shopping" in texts(at.caption)
+
+
+def test_without_a_limit_secret_the_default_of_250_applies(network):
+    network.account["before"] = 128  # what the owner's account showed on 2026-11-18
+    at = start(KEY, limit=None)
+    assert "SerpApi deze maand: 128 van 250 gebruikt, nog 122 over" in texts(at.caption)
+    search(at)
+    assert len(serp_calls(network)) == 2
+    assert not at.error
