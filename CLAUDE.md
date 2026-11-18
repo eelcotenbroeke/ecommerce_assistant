@@ -25,7 +25,9 @@ Read through `st.secrets`: `SERPAPI_KEY`, `BOL_CLIENT_ID`, `BOL_CLIENT_SECRET`. 
 
 ## Workflow
 
-- Never push to `main`. Work on a branch named `claude/<topic>`, open a pull request, and enable auto-merge (squash) once CI is green. Branches are deleted after merge.
+- Never push to `main`. Work on a branch named `claude/<topic>` and open a pull request.
+- The owner has authorised Claude to merge its own pull requests (squash) once `ci` is green; no further approval is needed (instruction of 2026-11-18). Use auto-merge when the `main` ruleset allows it, otherwise merge through the REST API after checking that `ci` passed on the PR's latest commit. Never merge with `ci` failing or missing, and only merge PRs Claude opened. Branches are deleted after merge.
+- Tooling: `gh pr create/view/merge` do not work in Claude sessions (GraphQL is blocked). Use the REST API through `gh api repos/{owner}/{repo}/pulls...`. Auto-merge is armed with `PUT /repos/{owner}/{repo}/pulls/{n}/ccr/auto_merge`. Deleting remote branches is blocked, so rely on delete-branch-on-merge.
 - Keep PRs small and single-purpose. In the description say what you tested and what you could not test.
 - The required status check is `ci`. Do not weaken or skip checks to get green.
 - Do not add dependencies without explaining why in the PR.
