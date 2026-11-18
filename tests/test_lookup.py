@@ -151,6 +151,23 @@ def test_block_is_reported_and_not_worked_around(status):
     assert net.sleeps == []
 
 
+def test_bot_check_page_is_a_block_not_a_retry():
+    # HTTP 202 with a small page is how AWS WAF answers a bot check (seen from Community Cloud)
+    net = Net({SEARCH_URL: (202, "<html>challenge</html>")})
+    result = net.lookup(EAN)
+    assert result.status == lookup.BLOCKED
+    assert "controlepagina (HTTP 202)" in result.message
+    assert "niet omzeilen" in result.message and "later opnieuw" not in result.message
+    assert net.calls == [SEARCH_URL]
+
+
+def test_bot_check_on_the_bol_page_asks_for_the_ean():
+    net = Net({BOL_URL: (202, "<html>challenge</html>")})
+    result = net.lookup(BOL_URL)
+    assert result.status == lookup.NEEDS_EAN
+    assert "controlepagina" in result.message and "Plak de EAN zelf" in result.message
+
+
 def test_server_error_says_try_later():
     result = Net({SEARCH_URL: (503, "")}).lookup(EAN)
     assert result.status == lookup.BLOCKED
