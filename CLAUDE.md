@@ -8,6 +8,8 @@ Paste a product URL, get the cheapest effective way to buy it in the Netherlands
 
 Direction under discussion, not final until the owner confirms: anchor on the product's EAN (bol and Amazon product pages expose it), look it up on price-comparison sites (a Beslist lookup by EAN found the best price in testing), check AH, Etos, Kruidvat and Jumbo for promos, and keep a watchlist for recurring purchases because promos are time-limited. The goal and research documents live in the claude.ai Project "ecommerce_assitant", not in this repo.
 
+Confirmed by the owner (2026-11-18): he buys online. Delivery from bol and Amazon is free for him, so those shops have effective shipping 0. He trusts bol and Amazon most: when one of them is less than 10% above the cheapest total, recommend it instead of the cheapest. This is implemented in `choice.py`.
+
 ## Commands
 
 ```bash
