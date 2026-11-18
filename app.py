@@ -21,6 +21,8 @@ import pandas as pd
 import requests
 import streamlit as st
 
+import ean_page
+
 # ---------------------------------------------------------------------------
 # Configuratie
 # ---------------------------------------------------------------------------
@@ -1432,6 +1434,13 @@ def render_results(snipe):
 
 st.set_page_config(page_title="Price Sniper App", page_icon="\U0001f3af", layout="centered")
 st.markdown(MOBILE_CSS, unsafe_allow_html=True)
+
+mode = st.radio(
+    "Weergave", ["Prijscheck (EAN)", "Zoeken (oud)"], horizontal=True, label_visibility="collapsed"
+)
+if mode == "Prijscheck (EAN)":
+    ean_page.render()
+    st.stop()
 
 st.title("\U0001f3af Universele E-Commerce Price Sniper")
 st.write("Automatische prijs- en volume-sniper met directe winkel-zoeklinks.")

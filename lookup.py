@@ -24,6 +24,7 @@ from choice import TOLERANCE, Recommendation, recommend
 from ean import extract_ids, normalize_gtin, parse_product_url
 
 PAUSE_SECONDS = 2.0  # between the two requests to Beslist
+SAMPLE_EAN = "3474637283414"  # a product known to be on Beslist, for connection tests
 _BLOCK_STATUSES = {401, 403, 429, 451}
 
 # Statuses: "ok" and "unavailable" mean the chain worked; the rest say what went wrong.
