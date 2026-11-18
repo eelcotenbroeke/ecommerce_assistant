@@ -21,6 +21,8 @@ ruff check --select E9,F63,F7,F82 .
 
 CI runs the last two. Run them before opening a PR.
 
+`python probe_beslist.py [EAN]` is a live check (two requests to Beslist, honest User-Agent): run it on the machine that will host the app to see whether Beslist can be read without a browser. It is not part of CI and the Claude sandbox cannot reach Beslist.
+
 ## Secrets
 
 Read through `st.secrets`: `SERPAPI_KEY`, `BOL_CLIENT_ID`, `BOL_CLIENT_SECRET`. Locally in `.streamlit/secrets.toml` (git-ignored). Never commit keys or paste them into PRs, issues or logs.
