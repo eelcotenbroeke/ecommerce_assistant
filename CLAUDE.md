@@ -36,6 +36,7 @@ Read through `st.secrets`: `SERPAPI_KEY`, `BOL_CLIENT_ID`, `BOL_CLIENT_SECRET`. 
 ## Code conventions
 
 - User-facing strings are Dutch. Identifiers and comments mix Dutch and English: follow the surrounding style.
+- New logic goes into small pure modules next to `app.py` (for example `ean.py`), each with tests in `tests/`; `app.py` only wires them in. No network or Streamlit calls inside the pure modules.
 - Keep pure helpers (`parse_price`, `extract_volume_ml`, ...) free of Streamlit calls so they stay testable. `import app` works in tests because Streamlit runs in bare mode.
 - Prices are floats in EUR, formatted with `fmt_eur`.
 
