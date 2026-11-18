@@ -223,3 +223,21 @@ def test_nothing_deliverable():
     fake = FakeSerp(shopping=[item("A.nl", 10.0, "Uitverkocht")], stores=[])
     result = run(fake)
     assert result.status == lookup.UNAVAILABLE and result.worked
+
+
+def test_guard_reason_stops_before_any_search():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)])
+    source = serp.serp_source(fake, now=lambda: "NOW", guard=lambda: "Maandbudget bereikt: 100 van 100")
+    result = lookup.lookup(EAN, None, source=source)
+    assert result.status == lookup.SOURCE_ERROR
+    assert result.message == "Maandbudget bereikt: 100 van 100"
+    assert result.source == "Google Shopping"
+    assert fake.calls == []
+    assert result.offers == ()
+
+
+def test_guard_that_says_none_lets_the_search_run():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[store("Flaconi.nl", 38.63, shipping="Free")])
+    source = serp.serp_source(fake, now=lambda: "NOW", guard=lambda: None)
+    assert lookup.lookup(EAN, None, source=source).status == lookup.OK
+    assert [call["engine"] for call in fake.calls] == ["google_shopping", "google_immersive_product"]

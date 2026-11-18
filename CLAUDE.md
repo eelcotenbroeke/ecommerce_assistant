@@ -25,7 +25,7 @@ CI runs the last two. Run them before opening a PR.
 
 ## Secrets
 
-Read through `st.secrets`: `SERPAPI_KEY`, `BOL_CLIENT_ID`, `BOL_CLIENT_SECRET`. Locally in `.streamlit/secrets.toml` (git-ignored). Never commit keys or paste them into PRs, issues or logs.
+Read through `st.secrets`: `SERPAPI_KEY`, `BOL_CLIENT_ID`, `BOL_CLIENT_SECRET`. Optional: `SERPAPI_MONTHLY_LIMIT` (searches per month the phone screen may use; default 100, the owner's maximum of 2026-11-18). Locally in `.streamlit/secrets.toml` (git-ignored). Never commit keys or paste them into PRs, issues or logs.
 
 ## Workflow
 
@@ -48,7 +48,7 @@ Read through `st.secrets`: `SERPAPI_KEY`, `BOL_CLIENT_ID`, `BOL_CLIENT_SECRET`. 
 
 ## Known issues (assessment of 2026-11-17)
 
-- SerpApi route (2026-11-18): unverified against a live answer; every lookup costs 2 searches (the screen caches a worked lookup for 15 minutes per session and counts calls). Shipping is often unknown from Google (shown as "onbekend", never guessed).
+- SerpApi route (2026-11-18): unverified against a live answer; every lookup costs 2 searches. The owner accepts at most 100 searches a month: the screen reads the month's usage from SerpApi's free Account API (`budget.py`), refuses to search when a lookup would pass the limit, caches a worked lookup for 15 minutes per session and counts calls. The Account API call is also unverified live. Shipping is often unknown from Google (shown as "onbekend", never guessed).
 - The `google_product` deep scan is dead (Google shut the service down; SerpApi points to the Immersive Product API). Not migrated.
 - `google_shopping` results may lack a direct merchant link, so the page-level promo check probably rarely runs. Needs one raw SerpApi response to confirm.
 - Shipping is mostly guessed. The volume parser has no grams/ounces and misses "1,5 L x 6" and "duopack".

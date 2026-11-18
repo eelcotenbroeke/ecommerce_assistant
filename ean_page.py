@@ -6,7 +6,9 @@ Shopping through SerpApi (serp.py); without one the Beslist chain is tried. Open
 ?url=<bol link or EAN> (for instance from a phone's share sheet) it runs the lookup straight away.
 
 Every SerpApi search costs a credit, so a worked lookup is remembered for CACHE_SECONDS per
-session and the screen counts the calls it made. The API key never reaches the page: it lives in
+session, the screen counts the calls it made, and no lookup starts when the month's budget
+(budget.py, default 100 searches, SERPAPI_MONTHLY_LIMIT in Secrets) is used up. The month's
+usage comes from SerpApi's free Account API. The API key never reaches the page: it lives in
 fetching.serp_fetcher and is removed from errors and from the downloadable raw answers.
 """
 import json
@@ -15,6 +17,7 @@ from datetime import datetime
 
 import streamlit as st
 
+import budget
 import fetching
 import lookup
 import lookup_view
@@ -42,6 +45,27 @@ def _api_key():
         return ""
 
 
+def _limit():
+    try:
+        return budget.parse_limit(st.secrets["SERPAPI_MONTHLY_LIMIT"])
+    except Exception:  # not set
+        return budget.DEFAULT_LIMIT
+
+
+def _refresh_account():
+    """Ask SerpApi (free) how much was used this month; None when that fails."""
+    data, _error = fetching.serp_account(_api_key())
+    account = budget.parse_account(data)
+    st.session_state["serp_account"] = account
+    return account
+
+
+def _guard():
+    """Reason not to search (budget used up), or None. Unknown usage does not block."""
+    account = _refresh_account()
+    return budget.check(account, _limit()) if account else None
+
+
 def _record(params, data, error):
     log = st.session_state.setdefault("serp_log", [])
     log.append(
@@ -60,8 +84,12 @@ def _lookup(text):
     key = _api_key()
     source = None
     if key:
-        source = serp.serp_source(fetching.serp_fetcher(key, recorder=_record), now=_now)
-    return lookup.lookup(text, fetching.fetch_url, sleep=time.sleep, now=_now, source=source)
+        fetch_json = fetching.serp_fetcher(key, recorder=_record)
+        source = serp.serp_source(fetch_json, now=_now, guard=_guard)
+    result = lookup.lookup(text, fetching.fetch_url, sleep=time.sleep, now=_now, source=source)
+    if key:
+        _refresh_account()  # the usage on the screen includes this lookup
+    return result
 
 
 def _run(text, fresh=False):
@@ -163,6 +191,8 @@ def render():
     st.title("\U0001f3af Prijscheck via EAN")
     st.caption("Plak een bol-link of een EAN. Bij een Amazon-link plak je de EAN zelf.")
     using_serp = bool(_api_key())
+    if using_serp and "serp_account" not in st.session_state:
+        _refresh_account()
     if not using_serp:
         st.warning(
             "Geen SERPAPI_KEY gevonden onder Settings → Secrets. Zonder sleutel wordt alleen "
@@ -194,10 +224,14 @@ def render():
         if st.button(label, key="ean_conn_test"):
             _connection_test(using_serp)
 
-    if using_serp:  # after the test, so the count and the download include its calls
+    if using_serp:  # after the test, so the numbers and the download include its calls
         calls = st.session_state.get("serp_calls", 0)
-        st.caption(
-            f"SerpApi-aanroepen in deze sessie: {calls}. Een prijscheck doet er maximaal 2; "
-            "het echte verbruik zie je in je SerpApi-dashboard."
-        )
+        account = st.session_state.get("serp_account")
+        if account:
+            st.caption(f"{budget.summary(account, _limit())} Deze sessie: {calls} aanroepen.")
+        else:
+            st.caption(
+                f"SerpApi-aanroepen in deze sessie: {calls}. Het maandverbruik kon niet worden "
+                "opgehaald; kijk in je SerpApi-dashboard."
+            )
         _raw_answers()

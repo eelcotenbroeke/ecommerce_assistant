@@ -41,15 +41,31 @@ def network(monkeypatch):
         ),
     }
 
+    # SerpApi's account: usage grows with every search made, like the real thing; the answer
+    # also holds the key and an e-mail address, as the real one does
+    account = {"before": 12, "plan": 250, "fails": False}
+
     def fake_fetch(url, timeout=20, accept="text/html"):
         calls.append(url)
         if url.startswith(fetching.SERPAPI_URL):
             return serp_answers[parse_qs(urlparse(url).query)["engine"][0]]
+        if url.startswith(fetching.SERPAPI_ACCOUNT_URL):
+            if account["fails"]:
+                return 503, "kapot"
+            used = account["before"] + sum(c.startswith(fetching.SERPAPI_URL) for c in calls)
+            body = {
+                "api_key": parse_qs(urlparse(url).query)["api_key"][0],
+                "account_email": "eigenaar@example.test",
+                "this_month_usage": used,
+                "total_searches_left": account["plan"] - used,
+            }
+            return 200, json.dumps(body)
         return answers[url]
 
     monkeypatch.setattr(fetching, "fetch_url", fake_fetch)
     monkeypatch.setattr(lookup, "PAUSE_SECONDS", 0)
-    fake_fetch.answers, fake_fetch.calls, fake_fetch.serp_answers = answers, calls, serp_answers
+    fake_fetch.answers, fake_fetch.calls = answers, calls
+    fake_fetch.serp_answers, fake_fetch.account = serp_answers, account
     return fake_fetch
 
 
@@ -69,7 +85,12 @@ def search(at, text=EAN):
 
 
 def serp_calls(network):
+    """The searches (they cost credits); the free account lookups are not in here."""
     return [url for url in network.calls if url.startswith(fetching.SERPAPI_URL)]
+
+
+def account_calls(network):
+    return [url for url in network.calls if url.startswith(fetching.SERPAPI_ACCOUNT_URL)]
 
 
 def texts(elements):
@@ -171,7 +192,8 @@ def test_with_a_key_the_offers_come_from_google_shopping(network):
     assert not at.exception
     assert not at.warning
     assert [b.label for b in at.button] == ["Zoek beste aanbieding", "Test SerpApi"]
-    assert network.calls == []
+    assert serp_calls(network) == []
+    assert "SerpApi deze maand: 12 van 100 gebruikt, nog 88 over" in texts(at.caption)
     search(at)
     assert not at.exception
     assert len(serp_calls(network)) == 2
@@ -182,7 +204,9 @@ def test_with_a_key_the_offers_come_from_google_shopping(network):
     assert len(at.dataframe) == 1
     assert f"Bron: Google Shopping \u00b7 Product: {TITLE}" in texts(at.caption)
     assert "controleer of de titel bij je product past" in texts(at.info)
-    assert "SerpApi-aanroepen in deze sessie: 2" in texts(at.caption)
+    # the usage line is refreshed after the lookup: 12 before + this lookup's 2 searches
+    assert "SerpApi deze maand: 14 van 100 gebruikt, nog 86 over" in texts(at.caption)
+    assert "Deze sessie: 2 aanroepen." in texts(at.caption)
     assert [b.label for b in at.get("download_button")] == ["Download antwoorden (JSON)"]
 
 
@@ -191,6 +215,7 @@ def test_the_api_key_never_reaches_the_page_or_the_download(network):
     search(at)
     assert KEY in serp_calls(network)[0]  # it does go to SerpApi ...
     assert KEY not in everything_on_screen(at)  # ... and nowhere else
+    assert "example.test" not in everything_on_screen(at)  # the account's e-mail neither
     assert KEY not in json.dumps(at.session_state["serp_log"], default=str)
     assert [entry["aanroep"]["engine"] for entry in at.session_state["serp_log"]] == [
         "google_shopping",
@@ -204,7 +229,7 @@ def test_same_input_within_fifteen_minutes_costs_nothing_more(network):
     search(at)
     assert len(serp_calls(network)) == 2
     assert "Uit het geheugen van deze sessie" in texts(at.caption)
-    assert "SerpApi-aanroepen in deze sessie: 2" in texts(at.caption)
+    assert "Deze sessie: 2 aanroepen." in texts(at.caption)
 
 
 def test_refresh_asks_again(network):
@@ -214,7 +239,7 @@ def test_refresh_asks_again(network):
     at.button(key="ean_refresh").click().run()
     assert len(serp_calls(network)) == 4
     assert "Uit het geheugen" not in texts(at.caption)
-    assert "SerpApi-aanroepen in deze sessie: 4" in texts(at.caption)
+    assert "Deze sessie: 4 aanroepen." in texts(at.caption)
 
 
 def test_cache_expires(network, monkeypatch):
@@ -247,7 +272,7 @@ def test_connection_test_with_a_key_uses_serpapi(network):
     at.button(key="ean_conn_test").click().run()
     assert "SerpApi werkt" in texts(at.success)
     assert len(serp_calls(network)) == 2
-    assert "SerpApi-aanroepen in deze sessie: 2" in texts(at.caption)  # test calls are counted
+    assert "Deze sessie: 2 aanroepen." in texts(at.caption)  # test calls are counted
 
 
 def test_read_time_is_in_the_owners_time_zone():
@@ -258,3 +283,73 @@ def test_read_time_is_in_the_owners_time_zone():
         pytest.skip("no tz database here")
     assert ean_page._now().tzinfo is not None
     assert ean_page._now().utcoffset().total_seconds() in (3600, 7200)
+
+
+# ------------------------------------------------------------------ the monthly budget
+
+
+def test_free_account_lookups_are_not_searches(network):
+    at = start(KEY)
+    search(at)
+    assert len(serp_calls(network)) == 2
+    assert len(account_calls(network)) == 3  # on opening, before the search, after the search
+
+
+def test_no_search_when_the_month_is_used_up(network):
+    network.account["before"] = 99  # 99 + 2 > 100
+    at = start(KEY)
+    search(at)
+    assert not at.exception
+    assert "Maandbudget bereikt: 99 van 100" in texts(at.error)
+    assert serp_calls(network) == []
+    assert len(at.dataframe) == 0
+    assert "SerpApi deze maand: 99 van 100 gebruikt, nog 1 over" in texts(at.caption)
+
+
+def test_the_last_lookup_that_still_fits_may_run(network):
+    network.account["before"] = 98  # 98 + 2 = 100
+    at = start(KEY)
+    search(at)
+    assert len(serp_calls(network)) == 2
+    assert "SerpApi deze maand: 100 van 100 gebruikt, nog 0 over" in texts(at.caption)
+    search(at, "3600523298136")  # another product: the budget is now gone
+    assert len(serp_calls(network)) == 2
+    assert "Maandbudget bereikt: 100 van 100" in texts(at.error)
+
+
+def test_the_limit_can_be_raised_in_secrets(network):
+    network.account["before"] = 120
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.secrets["SERPAPI_KEY"] = KEY
+    at.secrets["SERPAPI_MONTHLY_LIMIT"] = "150"
+    at.run()
+    search(at)
+    assert len(serp_calls(network)) == 2
+    assert "SerpApi deze maand: 122 van 150 gebruikt" in texts(at.caption)
+
+
+def test_a_finished_plan_stops_the_search_even_under_the_limit(network):
+    network.account["plan"] = 12 + 1  # one search left
+    at = start(KEY)
+    search(at)
+    assert "geen zoekopdrachten meer over" in texts(at.error)
+    assert serp_calls(network) == []
+
+
+def test_cached_result_needs_no_budget(network):
+    at = start(KEY)
+    search(at)
+    network.account["before"] = 500  # budget gone, but the cached lookup is free
+    search(at)
+    assert "Uit het geheugen van deze sessie" in texts(at.caption)
+    assert not at.error
+
+
+def test_unknown_usage_does_not_block_and_is_said(network):
+    network.account["fails"] = True
+    at = start(KEY)
+    assert not at.exception
+    assert "kon niet worden opgehaald" in texts(at.caption)
+    search(at)
+    assert len(serp_calls(network)) == 2
+    assert "Google Shopping" in texts(at.caption)

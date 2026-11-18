@@ -142,3 +142,37 @@ def test_fetch_url_accept_header(monkeypatch):
     assert seen["accept"] == "application/json"
     fetching.fetch_url("https://example.test/")
     assert seen["accept"] == "text/html"
+
+
+# ------------------------------------------------------------------ serp_account
+
+
+def account_with(status, body):
+    seen = []
+
+    def fake_fetch(url, timeout=20, accept="text/html"):
+        seen.append(url)
+        return status, body
+
+    return (lambda: fetching.serp_account(KEY, fetch=fake_fetch)), seen
+
+
+def test_serp_account_asks_the_free_account_endpoint_and_drops_the_key():
+    body = json.dumps({"api_key": KEY, "this_month_usage": 12, "account_email": "me@example.test"})
+    call, seen = account_with(200, body)
+    data, error = call()
+    assert error is None
+    assert data == {"this_month_usage": 12, "account_email": "me@example.test"}
+    assert seen == [f"{fetching.SERPAPI_ACCOUNT_URL}?api_key={KEY}"]
+
+
+def test_serp_account_failures_have_no_key_and_no_data():
+    call, _ = account_with(401, json.dumps({"error": f"Invalid API key: {KEY}"}))
+    assert call() == (None, "Invalid API key: ***")
+    call, _ = account_with(200, "<html>")
+    assert call() == (None, "SerpApi gaf HTTP 200 zonder leesbaar antwoord.")
+    call, _ = account_with(503, json.dumps({"x": 1}))
+    assert call() == (None, "SerpApi gaf HTTP 503.")
+    call, _ = account_with(None, f"timeout {KEY}")
+    data, error = call()
+    assert data is None and KEY not in error
