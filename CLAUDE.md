@@ -43,6 +43,8 @@ Read through `st.secrets`: `SERPAPI_KEY`, `BOL_CLIENT_ID`, `BOL_CLIENT_SECRET`. 
 - New logic goes into small pure modules next to `app.py` (for example `ean.py`), each with tests in `tests/`; `app.py` only wires them in. No network or Streamlit calls inside the pure modules.
 - Keep pure helpers (`parse_price`, `extract_volume_ml`, ...) free of Streamlit calls so they stay testable. `import app` works in tests because Streamlit runs in bare mode.
 - Prices are floats in EUR, formatted with `fmt_eur`.
+- `app.py` has CRLF line endings. Edit it without converting them and check `git diff --stat` before committing: a whole-file diff means the line endings were lost.
+- The owner uses the app mainly on his phone. `app.py` opens on the EAN screen (`ean_page.py`, texts and rows from `lookup_view.py`, chain in `lookup.py`); the old search sits behind the "Zoeken (oud)" toggle. `?url=<bol link or EAN>` runs the lookup straight away. All fetching goes through `fetching.py` (honest User-Agent); if a shop blocks it, report that and stop, never work around it.
 
 ## Known issues (assessment of 2026-11-17)
 

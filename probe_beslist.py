@@ -20,9 +20,9 @@ from datetime import datetime
 
 from choice import effective_offer
 from fetching import fetch_url
-from lookup import INVALID_INPUT, lookup
+from lookup import INVALID_INPUT, SAMPLE_EAN, lookup
 
-DEFAULT_EAN = "3474637283414"
+DEFAULT_EAN = SAMPLE_EAN
 
 
 def _eur(amount):
