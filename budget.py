@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-DEFAULT_LIMIT = 100
+DEFAULT_LIMIT = 250  # the owner raised it from 100 on 2026-11-18, after the first live check
 LOOKUP_COST = 2  # google_shopping + google_immersive_product
 
 
