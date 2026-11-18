@@ -115,6 +115,21 @@ def _ask_fresh():
     st.session_state["ean_force"] = True
 
 
+def _offer_block(card):
+    """One shop in the list: name and total, the line with price/shipping/delivery, details, link."""
+    with st.container(border=True):
+        st.markdown(f"**{card.shop}** \u00b7 {card.total}" + (f" \u00b7 _{card.badge}_" if card.badge else ""))
+        st.caption(card.line)
+        if card.title:
+            st.write(card.title)
+        for fact in card.details:
+            st.caption(fact)
+        if card.url:
+            st.link_button(f"Open {card.shop}", card.url)
+        else:
+            st.caption("Geen directe link: gebruik de knop met het product hieronder.")
+
+
 def _show(result):
     shown = getattr(st, lookup_view.severity(result))
     headline = lookup_view.headline(result)
@@ -124,16 +139,13 @@ def _show(result):
     tip = lookup_view.hint(result)
     if tip:
         st.info(tip)
-    if result.offers:
-        st.dataframe(lookup_view.offer_rows(result), hide_index=True, use_container_width=True)
+    for card in lookup_view.offer_cards(result):
+        _offer_block(card)
     line = lookup_view.source_line(result)
     if line:
         st.caption(line)
     if result.notes:
         st.info("\n\n".join(result.notes))
-    link = lookup_view.pick_link(result)
-    if link:
-        st.link_button(*link)
     if result.product_url:
         st.link_button(lookup_view.product_link_label(result), result.product_url)
     note = lookup_view.read_note(result)

@@ -1,9 +1,12 @@
-"""Text and table rows for showing a LookupResult (Dutch). Pure: no Streamlit, no network.
+"""Texts and offer blocks for showing a LookupResult (Dutch). Pure: no Streamlit, no network.
 
-The Streamlit screen (ean_page.py) only places these strings and rows on the page, so what the
+The Streamlit screen (ean_page.py) only places these strings and blocks on the page, so what the
 owner reads is covered by tests.
 """
 from __future__ import annotations
+
+import unicodedata
+from dataclasses import dataclass
 
 import lookup
 from choice import effective_offer, is_preferred
@@ -60,14 +63,6 @@ def source_line(result):
     return " \u00b7 ".join(parts) or None
 
 
-def pick_link(result):
-    """(label, url) to open the recommended shop, or None when the source gave no usable link."""
-    advice = result.recommendation
-    if advice is None or not str(advice.pick.url or "").startswith(("https://", "http://")):
-        return None
-    return f"Open {advice.pick.shop}", advice.pick.url
-
-
 def product_link_label(result):
     """Button text for result.product_url (the product page at the source)."""
     return f"Bekijk op {result.source}" if result.source else "Bekijk product"
@@ -102,24 +97,66 @@ def _shipping_text(offer):
     return eur(shown.shipping)
 
 
-def offer_rows(result):
-    """One dict per offer, deliverable ones cheapest first, then the ones that cannot be had."""
+@dataclass(frozen=True)
+class OfferCard:
+    """One shop's offer as a block in the list on the phone screen."""
+
+    shop: str
+    total: str  # what the owner pays, e.g. "\u20ac 38,63"
+    badge: str | None  # "Aanbevolen", "Goedkoopste" or None
+    line: str  # price, shipping and delivery in one line
+    title: str | None  # the product as this shop calls it (only when it differs from the product)
+    details: tuple[str, ...]
+    url: str | None  # link to the shop (http/https only)
+    deliverable: bool
+
+
+def _same_text(a, b):
+    """Same words, ignoring case, accents, spaces and punctuation."""
+
+    def squash(text):
+        plain = unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode()
+        return "".join(ch for ch in plain.lower() if ch.isalnum())
+
+    return squash(a) == squash(b)
+
+
+def _web_link(url):
+    return url if str(url or "").startswith(("https://", "http://")) else None
+
+
+def offer_cards(result):
+    """One OfferCard per offer: the recommended one first, then deliverable ones cheapest first,
+    then the ones that cannot be had."""
+    advice = result.recommendation
+    pick_shop = advice.pick.shop if advice is not None else None
     ordered = sorted(
         result.offers,
-        key=lambda offer: (not offer.deliverable, effective_offer(offer).total),
+        key=lambda offer: (offer.shop != pick_shop, not offer.deliverable, effective_offer(offer).total),
     )
-    rows = []
+    cards = []
     for offer in ordered:
         shown = effective_offer(offer)
         total = eur(shown.total) if shown.shipping is not None else eur(shown.total) + " + verzending?"
-        rows.append(
-            {
-                "Winkel": offer.shop,
-                "Totaal": total,
-                "Prijs": eur(offer.price),
-                "Verzending": _shipping_text(offer),
-                "Levering": offer.delivery or "onbekend",
-                "Leverbaar": "ja" if offer.deliverable else "nee",
-            }
+        is_pick = advice is not None and offer.shop == advice.pick.shop
+        is_cheapest = advice is not None and offer.shop == advice.cheapest.shop
+        badge = "Aanbevolen" if is_pick else "Goedkoopste" if is_cheapest else None
+        parts = [] if offer.deliverable else ["Niet leverbaar"]
+        parts.append(f"Prijs {eur(offer.price)}")
+        parts.append(f"verzending {_shipping_text(offer)}")
+        if offer.delivery:
+            parts.append(f"levering {offer.delivery}")
+        title = offer.title if offer.title and not _same_text(offer.title, result.product_title) else None
+        cards.append(
+            OfferCard(
+                shop=offer.shop,
+                total=total,
+                badge=badge,
+                line=" \u00b7 ".join(parts),
+                title=title,
+                details=tuple(offer.details),
+                url=_web_link(offer.url),
+                deliverable=offer.deliverable,
+            )
         )
-    return rows
+    return cards
