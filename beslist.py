@@ -112,6 +112,11 @@ _UNDELIVERABLE_RE = re.compile(
 )
 
 
+def is_undeliverable_text(text):
+    """True when a delivery/stock text says the item cannot be had ("Niet leverbaar", ...)."""
+    return bool(text) and _UNDELIVERABLE_RE.search(str(text)) is not None
+
+
 class _LdScan(HTMLParser):
     """Collects the text of every <script type="application/ld+json"> block."""
 
@@ -238,9 +243,7 @@ def _to_offer(node):
         return None
     shipping, delivery = _shipping(node.get("shippingDetails"))
     availability = str(node.get("availability") or "").rstrip("/").rsplit("/", 1)[-1]
-    deliverable = availability in _AVAILABLE and not (
-        delivery and _UNDELIVERABLE_RE.search(delivery)
-    )
+    deliverable = availability in _AVAILABLE and not is_undeliverable_text(delivery)
     link = node.get("url")
     url = urljoin(BASE_URL + "/", link) if isinstance(link, str) and link.strip() else None
     return Offer(
