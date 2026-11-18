@@ -23,7 +23,7 @@ def severity(result):
     """'success', 'warning' or 'error': how loudly to show the message."""
     if result.status == lookup.OK:
         return "success"
-    if result.status in (lookup.BLOCKED, lookup.MISMATCH):
+    if result.status in (lookup.BLOCKED, lookup.MISMATCH, lookup.SOURCE_ERROR):
         return "error"
     return "warning"
 
@@ -48,6 +48,29 @@ def explanation(result):
             "vertrouw je het meest en zij bezorgen gratis."
         )
     return "De goedkoopste leverbare optie, inclusief verzending."
+
+
+def source_line(result):
+    """Where the offers came from and which product that is, for the owner to check."""
+    parts = []
+    if result.source:
+        parts.append(f"Bron: {result.source}")
+    if result.product_title:
+        parts.append(f"Product: {result.product_title}")
+    return " \u00b7 ".join(parts) or None
+
+
+def pick_link(result):
+    """(label, url) to open the recommended shop, or None when the source gave no usable link."""
+    advice = result.recommendation
+    if advice is None or not str(advice.pick.url or "").startswith(("https://", "http://")):
+        return None
+    return f"Open {advice.pick.shop}", advice.pick.url
+
+
+def product_link_label(result):
+    """Button text for result.product_url (the product page at the source)."""
+    return f"Bekijk op {result.source}" if result.source else "Bekijk product"
 
 
 def read_note(result):
