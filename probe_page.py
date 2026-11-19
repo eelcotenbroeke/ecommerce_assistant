@@ -63,6 +63,8 @@ def _show_report(report):
             lines.append(f"Naam: {report.name} (uit {report.name_source})")
         if report.skus:
             lines.append("Eigen artikelcode van de winkel: " + ", ".join(report.skus))
+        for barcode, context in report.barcode_hints:
+            lines.append(f"Barcode in de paginacode (niet zeker dat het dit product is): {barcode} \u2014 {context}")
         if report.variants > 1:
             lines.append(f"{report.variants} varianten in de paginagegevens")
         for line in lines:

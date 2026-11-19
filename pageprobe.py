@@ -46,6 +46,15 @@ _LABEL_RE = re.compile(
     re.IGNORECASE,
 )
 _INVISIBLE_RE = re.compile(r"[‎‏ ]")
+# spec-table labels that hold the manufacturer's article code (not the shop's own "Artikelnummer")
+_MPN_LABEL_RE = re.compile(
+    r"(?:fabrikant(?:s)?(?:code|nummer|artikelnummer)?|mpn|manufacturer(?: part)?(?: number| code)?|part number|onderdeelnummer)",
+    re.IGNORECASE,
+)
+_BRAND_LABEL_RE = re.compile(r"(?:merk|brand)", re.IGNORECASE)
+_NUMBER_RE = re.compile(r"(?<![0-9])([0-9]{8}|[0-9]{12,14})(?![0-9])")
+_BARCODE_KEY_RE = re.compile(r"(?:ean|gtin|barcode|upc|isbn)", re.IGNORECASE)
+MAX_BARCODE_HINTS = 6
 
 
 # --------------------------------------------------------------------------- links
@@ -231,6 +240,29 @@ def spec_pairs(texts):
     return pairs
 
 
+def barcode_hints(html, limit=MAX_BARCODE_HINTS):
+    """Valid barcodes anywhere in the page text (scripts included) that a label such as "ean" or "gtin" precedes.
+
+    Returns (barcode, short context) pairs, first occurrence of each. Digit strings without such a
+    label are ignored: ids and timestamps pass the check digit often enough to be noise. These are
+    hints only, since a page can carry the barcodes of other products too (carousels).
+    """
+    text = str(html or "")
+    found = {}
+    for match in _NUMBER_RE.finditer(text):
+        gtin = ean.normalize_gtin(match.group(1))
+        if not gtin or gtin in found:
+            continue
+        start, end = match.span(1)
+        if not _BARCODE_KEY_RE.search(text[max(0, start - 30) : start]):
+            continue
+        context = " ".join(text[max(0, start - 40) : end + 12].split())
+        found[gtin] = _clip(context, 100)
+        if len(found) >= limit:
+            break
+    return tuple(found.items())
+
+
 # --------------------------------------------------------------------------- the report
 
 
@@ -249,6 +281,7 @@ class PageReport:
     name: str | None = None
     name_source: str | None = None  # "json-ld", "og:title" or "title"
     variants: int = 0  # product nodes in the JSON-LD; more than one is a group with variants
+    barcode_hints: tuple[tuple[str, str], ...] = ()  # (barcode, context) found next to an "ean"/"gtin" label anywhere
     raw: dict | None = None  # trimmed page data for the download (fixtures); never the full HTML
 
     @property
@@ -301,9 +334,13 @@ def read_page(url, status, text):
         name, name_source = _clip(scan.title), "title"
     brand = next((b for b in (_text(node.get("brand")) for node in nodes) if b), None)
     brand = brand or _text(scan.meta.get("product:brand") or scan.meta.get("og:brand"))
-    mpns = tuple(_unique(_text(node.get("mpn")) for node in nodes))[:MAX_VALUES]
     skus = tuple(_unique(_text(node.get("sku") or node.get("productID")) for node in nodes))[:MAX_VALUES]
     pairs = spec_pairs(scan.texts)
+    # the manufacturer's code and the brand also stand in spec rows ("Fabrikantcode", "Merk") on pages whose JSON-LD lacks them
+    from_rows = [_clip(value, 80) for label, value in pairs if _MPN_LABEL_RE.fullmatch(label)]
+    mpns = tuple(_unique([*(_text(node.get("mpn")) for node in nodes), *from_rows]))[:MAX_VALUES]
+    brand = brand or next((_clip(value, 80) for label, value in pairs if _BRAND_LABEL_RE.fullmatch(label)), None)
+    hints = barcode_hints(text)
     raw = {
         "url": url,
         "status": status,
@@ -312,21 +349,25 @@ def read_page(url, status, text):
         "meta": {k: _clip(v, 200) for k, v in scan.meta.items() if k.startswith(("og:", "product:", "twitter:title"))},
         "json_ld_products": [_trimmed(node) for node in nodes[:5]],
         "spec_pairs": [list(pair) for pair in pairs],
+        "barcode_hints": [list(hint) for hint in hints],
     }
     report = PageReport(
-        url, host, READABLE, "", status, ids.ean, ids.source, mpns, skus, brand, name, name_source, len(nodes), raw
+        url, host, READABLE, "", status, ids.ean, ids.source, mpns, skus, brand, name, name_source, len(nodes),
+        hints, raw,
     )
     if not (nodes or ids.ean or pairs):
         return PageReport(
             url, host, NO_PRODUCT,
             "Pagina gelezen, maar er staan geen productgegevens in (de winkel laadt ze misschien met JavaScript).",
-            status, name=name, name_source=name_source, raw=raw,
+            status, name=name, name_source=name_source, barcode_hints=hints, raw=raw,
         )
     found = [label for label, value in (("EAN", report.ean), ("MPN", report.mpns), ("merk", report.brand), ("naam", report.name)) if value]
     missing = [label for label in ("EAN", "MPN", "merk", "naam") if label not in found]
     message = "Pagina gelezen. Gevonden: " + (", ".join(found) or "niets bruikbaars") + "."
     if missing:
         message += " Ontbreekt: " + ", ".join(missing) + "."
+    if not report.ean and hints:
+        message += " Wel een barcode in de paginacode gevonden (onzeker of het dit product is)."
     return PageReport(**{**report.__dict__, "message": message})
 
 
@@ -364,6 +405,7 @@ def download_data(reports):
                 "naam": report.name,
                 "naam_bron": report.name_source,
                 "varianten": report.variants,
+                "barcode_hints": [list(hint) for hint in report.barcode_hints],
             },
             "pagina": report.raw,
         }

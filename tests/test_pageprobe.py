@@ -168,3 +168,67 @@ def test_download_data_has_verdict_findings_and_page_data_but_no_html():
     assert data[0]["pagina"]["json_ld_products"][0]["name"] == "X"
     assert data[1]["oordeel"] == pp.BLOCKED and data[1]["pagina"] is None
     assert "SECRET-BODY-TEXT" not in json.dumps(data)
+
+
+# ------------------------------------------------------------------ what a real Coolblue page showed (2026-11-19)
+
+from pathlib import Path  # noqa: E402
+
+
+def coolblue_page():
+    """The page rebuilt from the owner's real probe result: JSON-LD product + spec rows, no barcode anywhere."""
+    real = json.loads((Path(__file__).parent / "data" / "probe_real_coolblue_dyson.json").read_text(encoding="utf-8"))
+    product = {k: v for k, v in real["pagina"]["json_ld_products"][0].items()}
+    rows = "".join(f"<tr><th>{a}</th><td>{b}</td></tr>" for a, b in real["pagina"]["spec_pairs"])
+    return real["link"], page(ld=[product], body=f"<table>{rows}</table>", title=real["pagina"]["title"])
+
+
+def test_the_manufacturers_code_comes_from_the_spec_row_when_json_ld_has_no_mpn():
+    url, html = coolblue_page()
+    report = pp.read_page(url, 200, html)
+    assert report.verdict == pp.READABLE
+    assert report.mpns == ("476575-01",)  # "Fabrikantcode", not the shop's own "Artikelnummer"
+    assert report.skus == ("937057",)
+    assert (report.brand, report.name) == ("Dyson", "Dyson V15 Detect Fluffy")
+    assert report.ean is None and report.barcode_hints == ()
+    assert report.rungs == ("merk + MPN", "productnaam")
+    assert "Gevonden: MPN, merk, naam" in report.message and "Ontbreekt: EAN" in report.message
+
+
+def test_the_brand_comes_from_the_merk_row_when_json_ld_has_none():
+    body = "<table><tr><th>Merk</th><td>Philips</td></tr><tr><th>Fabrikantcode</th><td>S5000/20</td></tr></table>"
+    report = read(page(body=body))
+    assert (report.brand, report.mpns) == ("Philips", ("S5000/20",))
+
+
+def test_json_ld_mpn_and_row_mpn_are_both_kept_without_repeats():
+    html = page(ld=[{"@type": "Product", "name": "X", "mpn": "AB-1"}], body="<table><tr><th>MPN</th><td>AB-1</td></tr><tr><th>Fabrikantcode</th><td>AB-2</td></tr></table>")
+    assert read(html).mpns == ("AB-1", "AB-2")
+
+
+# ------------------------------------------------------------------ barcodes anywhere in the page code
+
+
+def test_a_barcode_next_to_an_ean_label_in_a_script_is_reported_as_a_hint_not_as_the_ean():
+    html = page(ld=[{"@type": "Product", "name": "X", "brand": "Y"}], body='<script>window.dataLayer=[{"id":"937057","ean":"3474637283414"}]</script>')
+    report = read(html)
+    assert report.ean is None  # not trusted: the page could mention other products too
+    assert [h[0] for h in report.barcode_hints] == [EAN]
+    assert '"ean":"3474637283414"' in report.barcode_hints[0][1]
+    assert "Wel een barcode in de paginacode gevonden" in report.message
+    assert report.raw["barcode_hints"][0][0] == EAN
+
+
+def test_valid_looking_numbers_without_a_label_are_ignored():
+    body = "<p>bestelnummer 4006381333931</p><script>var t=1732017600000;</script>"
+    assert pp.barcode_hints(page(body=body)) == ()
+
+
+def test_barcode_hints_are_distinct_capped_and_need_a_valid_check_digit():
+    valid = ["4006381333931", "3474637283414", "8711200123452", "5449000000996", "4003994155486", "8000500310427", "3017620422003"]
+    bad = "ean 3474637283415"  # wrong check digit
+    text = " ".join(f"gtin:{v} ean {v}" for v in valid) + " " + bad
+    hints = pp.barcode_hints(text)
+    assert len(hints) == pp.MAX_BARCODE_HINTS
+    assert [h[0] for h in hints] == [v for v in valid if pp.ean.normalize_gtin(v)][: pp.MAX_BARCODE_HINTS]
+    assert "3474637283415" not in [h[0] for h in pp.barcode_hints(bad)]

@@ -1,0 +1,46 @@
+{
+  "_comment": "Real result of the page probe for one Coolblue product page, read 2026-11-19 from the owner's app (trimmed: the page itself is not kept). The JSON-LD had brand, name, sku and an offer but no mpn or gtin; the manufacturer's code stood in a spec row 'Fabrikantcode'.",
+  "link": "https://www.coolblue.nl/product/937057/dyson-v15-detect-fluffy.html",
+  "pagina": {
+    "url": "https://www.coolblue.nl/product/937057/dyson-v15-detect-fluffy.html",
+    "status": 200,
+    "bytes": 726764,
+    "title": "Dyson V15 Detect Fluffy | Coolblue | Stofzuigers",
+    "meta": {
+      "og:title": "Dyson V15 Detect Fluffy | Coolblue | Stofzuigers",
+      "og:description": "Bestel de Dyson V15 Detect Fluffy bij Coolblue. Voor 23.59u? Morgen gratis bezorgd. Coolblue: alles voor een glimlach.",
+      "twitter:title": "Dyson V15 Detect Fluffy | Coolblue | Stofzuigers"
+    },
+    "json_ld_products": [
+      {
+        "@type": "Product",
+        "name": "Dyson V15 Detect Fluffy",
+        "brand": {
+          "@type": "Brand",
+          "name": "Dyson"
+        },
+        "sku": "937057",
+        "url": "https://www.coolblue.nl/product/937057/dyson-v15-detect-fluffy.html",
+        "offers": {
+          "price": 799,
+          "priceCurrency": "EUR",
+          "availability": "https://schema.org/SoldOut"
+        }
+      }
+    ],
+    "spec_pairs": [
+      [
+        "Artikelnummer",
+        "937057"
+      ],
+      [
+        "Fabrikantcode",
+        "476575-01"
+      ],
+      [
+        "Merk",
+        "Dyson"
+      ]
+    ]
+  }
+}
