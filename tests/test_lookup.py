@@ -547,3 +547,39 @@ def test_finish_choice_passes_a_failure_on_with_its_message():
     chosen = lookup.finish_choice(lookup.lookup(EAN, None, source=choose_source(lambda c, s: failure)), "a")
     assert (chosen.status, chosen.message, chosen.source) == (lookup.SOURCE_ERROR, "Maandbudget bereikt", "Bron")
     assert not chosen.worked and chosen.offers == ()
+
+
+# ------------------------------------------------------------------ the link the person stands on
+
+
+def test_the_pasted_link_is_kept_as_the_shop_the_person_stands_in():
+    net = Net({})
+    result = net.lookup(KRUIDVAT_URL, source=NameSource())
+    assert result.reference_link == KRUIDVAT_URL
+    failed = Net({BOL_URL: (403, "nee")}).lookup(BOL_URL)  # bol refuses: still the link he came from
+    assert failed.status == lookup.NEEDS_EAN and failed.reference_link == BOL_URL
+
+
+def test_a_barcode_or_a_name_has_no_reference_shop():
+    assert Net({SEARCH_URL: (200, SEARCH_PAGE), PRODUCT_URL: (200, product_page())}).lookup(EAN).reference_link is None
+    named = lookup.lookup("", None, source=NameSource(), by_name=True)
+    assert named.reference_link is None
+
+
+def test_the_reference_link_survives_choosing_a_product():
+    def finish(candidate, steps):
+        return lookup.Found((Offer("Flaconi.nl", 38.63, 0.0, "1 dag", True, None),), "Bron", title="T")
+
+    def choose_source(finish):  # a source that searches on names, like the Google one
+        def source(ean, steps, page_name=None):
+            return lookup.Choose(("a", "b"), "Bron", finish)
+
+        return source
+
+    link = "https://www.flaconi.nl/kerastase-gloss-absolu-shampoo/p/1"
+    pending = lookup.lookup(link, None, source=choose_source(finish))
+    assert pending.status == lookup.CHOOSE and pending.reference_link == link
+    assert lookup.finish_choice(pending, "a").reference_link == link
+    failing = lookup.Failure(lookup.SOURCE_ERROR, "Maandbudget bereikt", "Bron")
+    pending = lookup.lookup(link, None, source=choose_source(lambda c, s: failing))
+    assert lookup.finish_choice(pending, "a").reference_link == link

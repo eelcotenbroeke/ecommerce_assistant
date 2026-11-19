@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 
 import lookup
 import members
+import verdict as verdicts
 from choice import effective_offer, is_preferred, recommend
 
 
@@ -54,6 +55,73 @@ def explanation(result):
             "vertrouw je het meest en zij bezorgen gratis."
         )
     return "De goedkoopste leverbare optie, inclusief verzending."
+
+
+def verdict_for(shown, everything=None, typed=""):
+    """The verdict for what the screen shows: the link's shop against the recommended offer.
+
+    `shown` is the result after the member filter (its recommendation is the pick); `everything`
+    is the result before it, because the link's shop may not be a member and is still the one the
+    person stands in. `typed` is the total he typed, when the shop is not in the offers.
+    """
+    everything = everything or shown
+    link = getattr(everything, "reference_link", None)
+    if not link or shown.recommendation is None:
+        return None
+    return verdicts.verdict(
+        link, everything.offers, shown.recommendation, typed_total=verdicts.parse_total(typed)
+    )
+
+
+VERDICT_ASK = "Wat zie je als totaalprijs op de pagina (met verzending)?"
+VERDICT_BAD_TOTAL = "Dat lees ik niet als bedrag; vul bijvoorbeeld 13,99 in."
+
+
+def verdict_severity(found):
+    """'success', 'warning' or 'info' for a Verdict."""
+    return {verdicts.BEST: "success", verdicts.CHEAPER: "warning", verdicts.GONE: "warning"}.get(
+        found.kind, "info"
+    )
+
+
+def verdict_headline(found):
+    if found.kind == verdicts.CHEAPER:
+        return (
+            f"Goedkoper elders: bespaar {eur(found.saving)} ({_pct(found.saving_pct)}) "
+            f"bij {found.best_shop}"
+        )
+    if found.kind == verdicts.BEST:
+        return f"Je zit al goed: {found.shop} is de goedkoopste optie die we vonden"
+    if found.kind == verdicts.GONE:
+        return f"Niet leverbaar bij {found.shop}"
+    return f"{found.shop} staat niet in de lijst"
+
+
+def verdict_detail(found):
+    """One or two sentences under the verdict headline."""
+    where = "jouw prijs" if found.typed else found.shop
+    if found.kind == verdicts.CHEAPER:
+        text = (
+            f"{found.best_shop}: {eur(found.best_total)} in totaal, tegen {eur(found.reference_total)} "
+            f"bij {where}."
+        )
+        if found.pick_shop != found.best_shop and found.pick_saving >= verdicts.MIN_SAVING:
+            text += (
+                f" Bij {found.pick_shop} betaal je {eur(found.pick_total)} en bezorgen ze gratis: "
+                f"je bespaart {eur(found.pick_saving)}."
+            )
+    elif found.kind == verdicts.BEST:
+        text = f"{eur(found.reference_total)} in totaal bij {where}."
+    elif found.kind == verdicts.GONE:
+        text = f"Beste alternatief: {found.pick_shop}, {eur(found.pick_total)} in totaal."
+    else:
+        return (
+            f"Vul de totaalprijs in die je ziet, dan vergelijk ik die met de goedkoopste optie, "
+            f"{found.best_shop} ({eur(found.best_total)})."
+        )
+    if found.reference_total is not None and not found.shipping_known:
+        text += f" De verzendkosten bij {found.shop} zijn onbekend: het kan duurder uitvallen."
+    return text
 
 
 def product_line(result):

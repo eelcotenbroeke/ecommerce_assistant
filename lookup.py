@@ -110,6 +110,7 @@ class LookupResult:
     candidates: tuple = ()  # status CHOOSE: the products to pick from
     pending: Callable | None = None  # status CHOOSE: what `finish_choice` calls
     query: str | None = None  # what the source searched for when that was not the barcode
+    reference_link: str | None = None  # the link the person pasted: the shop he stands in (verdict.py)
 
     @property
     def worked(self):
@@ -353,6 +354,13 @@ def lookup(text, fetch, sleep=time.sleep, now=datetime.now, tolerance=TOLERANCE,
     With `by_name` there is no link or EAN: the owner gave a product name and the source (which
     holds that name) searches on it. Only a source that can do that works: Beslist cannot.
     """
+    result = _chain(text, fetch, sleep, now, tolerance, source, by_name)
+    link = (text or "").strip()
+    return replace(result, reference_link=link) if not by_name and looks_like_link(link) else result
+
+
+def _chain(text, fetch, sleep, now, tolerance, source, by_name):
+    """`lookup` without the reference link."""
     steps = []
     can_search_names = source is not None
     from_link = False
@@ -430,6 +438,9 @@ def finish_choice(result, candidate, tolerance=TOLERANCE):
         return _result(
             steps, result.ean, result.child_gtins, found.status, found.message,
             source=found.source or result.source, product_url=found.product_url,
-            query=found.query or result.query,
+            query=found.query or result.query, reference_link=result.reference_link,
         )
-    return _from_found(found, steps, result.ean, result.child_gtins, tolerance)
+    return replace(
+        _from_found(found, steps, result.ean, result.child_gtins, tolerance),
+        reference_link=result.reference_link,
+    )

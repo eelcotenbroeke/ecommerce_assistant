@@ -26,12 +26,14 @@ import lookup_view
 import members
 import probe_page
 import serp
+import verdict as verdicts
 
 CACHE_SECONDS = 15 * 60
 LOG_LIMIT = 60  # raw SerpApi answers kept for the download (a lookup makes at most 2): room for a session of ~25 products
 TIME_ZONE = "Europe/Amsterdam"
 MEMBERS_ONLY_KEY = "ean_members_only"  # the switch itself (Streamlit forgets it while it is not drawn)
 MEMBERS_KEPT_KEY = "ean_members_only_kept"  # its last value, for a result that shows no switch
+TYPED_TOTAL_KEY = "ean_typed_total"  # the total the person typed for the shop he stands in
 
 
 def _now():
@@ -129,6 +131,7 @@ def _run(text, hint="", fresh=False):
     key = f"{text}\n{hint}"
     st.session_state["ean_last"] = (text, hint)
     st.session_state.pop("ean_choose_result", None)
+    st.session_state.pop(TYPED_TOTAL_KEY, None)  # a price typed for another product means nothing now
     entry = None if fresh else _cached(key)
     if entry:
         _set_result(entry[1], entry[0])
@@ -211,6 +214,18 @@ def _show_candidates(result):
             st.write(step)
 
 
+def _show_verdict(found, typed):
+    """The answer to "buy here or elsewhere?" above the list: the link's shop against the pick."""
+    getattr(st, lookup_view.verdict_severity(found))(f"**{lookup_view.verdict_headline(found)}**")
+    st.write(lookup_view.verdict_detail(found))
+    if found.kind == verdicts.UNKNOWN or typed:
+        st.text_input(
+            lookup_view.VERDICT_ASK, key=TYPED_TOTAL_KEY, placeholder="bijvoorbeeld 13,99"
+        )
+        if typed and verdicts.parse_total(typed) is None:
+            st.caption(lookup_view.VERDICT_BAD_TOTAL)
+
+
 def _show(result):
     if result.status == lookup.CHOOSE:
         _show_candidates(result)
@@ -218,7 +233,12 @@ def _show(result):
     member_list = members.load()
     # Read before the switch is drawn (below the headline): the answer depends on it.
     only_members = _members_only()
+    everything = result
     result, hidden = lookup_view.apply_member_filter(result, member_list, only_members)
+    typed = st.session_state.get(TYPED_TOTAL_KEY, "")
+    found = lookup_view.verdict_for(result, everything, typed)
+    if found is not None:
+        _show_verdict(found, typed)
     shown = getattr(st, lookup_view.severity(result))
     headline = lookup_view.headline(result)
     shown(f"**{headline}**" if headline else result.message)
