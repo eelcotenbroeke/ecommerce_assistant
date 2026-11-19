@@ -221,6 +221,15 @@ CHOOSE_INTRO = (
     "Google Shopping zoekt niet exact op de EAN en gaf deze producten terug. Tik op het product "
     "dat je bedoelt: dan haal ik de winkels op (1 zoekopdracht)."
 )
+CHOOSE_INTRO_NAME = (
+    "Google Shopping gaf deze producten terug voor je zoekterm. Tik op het product dat je "
+    "bedoelt: dan haal ik de winkels op (1 zoekopdracht)."
+)
+
+
+def choose_intro(result):
+    """Text above the candidate list: without an EAN nothing was searched 'exactly' on a barcode."""
+    return CHOOSE_INTRO if getattr(result, "ean", None) else CHOOSE_INTRO_NAME
 
 
 @dataclass(frozen=True)

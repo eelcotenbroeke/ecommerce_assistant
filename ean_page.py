@@ -27,7 +27,7 @@ import probe_page
 import serp
 
 CACHE_SECONDS = 15 * 60
-LOG_LIMIT = 6  # raw SerpApi answers kept for the download (a lookup makes at most 2)
+LOG_LIMIT = 60  # raw SerpApi answers kept for the download (a lookup makes at most 2): room for a session of ~25 products
 TIME_ZONE = "Europe/Amsterdam"
 MEMBERS_ONLY_KEY = "ean_members_only"  # the switch itself (Streamlit forgets it while it is not drawn)
 MEMBERS_KEPT_KEY = "ean_members_only_kept"  # its last value, for a result that shows no switch
@@ -87,11 +87,15 @@ def _record(params, data, error):
 
 def _lookup(text, hint=""):
     key = _api_key()
+    # A name instead of a link or an EAN (typed in either field) is searched on as it is.
+    name = lookup.name_from_input(text, hint)
     source = None
     if key:
         fetch_json = fetching.serp_fetcher(key, recorder=_record)
-        source = serp.serp_source(fetch_json, now=_now, guard=_guard, hint=hint or None)
-    result = lookup.lookup(text, fetching.fetch_url, sleep=time.sleep, now=_now, source=source)
+        source = serp.serp_source(fetch_json, now=_now, guard=_guard, hint=name or hint or None)
+    result = lookup.lookup(
+        text, fetching.fetch_url, sleep=time.sleep, now=_now, source=source, by_name=bool(name)
+    )
     if key:
         _refresh_account()  # the usage on the screen includes this lookup
     return result
@@ -189,7 +193,7 @@ def _offer_block(card):
 
 
 def _show_candidates(result):
-    st.info(lookup_view.CHOOSE_INTRO)
+    st.info(lookup_view.choose_intro(result))
     for index, card in enumerate(lookup_view.candidate_cards(result)):
         with st.container(border=True):
             picture, text = st.columns([1, 3])
@@ -302,7 +306,7 @@ def render():
         # nested"). There is nothing to show without a session anyway.
         return
     st.title("\U0001f3af Prijscheck via EAN")
-    st.caption("Plak een bol-link, een Amazon-link of een EAN.")
+    st.caption("Plak een bol-link, een Amazon-link of een EAN, of vul alleen een productnaam in.")
     using_serp = bool(_api_key())
     if using_serp and "serp_account" not in st.session_state:
         _refresh_account()
@@ -321,7 +325,7 @@ def render():
         "Productnaam (optioneel)",
         key="ean_hint",
         placeholder="bijv. Kérastase Gloss Absolu shampoo",
-        help="Google zoekt niet exact op EAN: soms vindt het niets of verkeerde producten. Met een naam zoekt Google op de naam en komt je product bovenaan.",
+        help="Google zoekt niet exact op EAN: soms vindt het niets of verkeerde producten. Met een naam zoekt Google op de naam en komt je product bovenaan. Alleen de naam invullen (zonder link of EAN) kan ook.",
     )
     clicked = form.form_submit_button("Zoek beste aanbieding", type="primary")
 
