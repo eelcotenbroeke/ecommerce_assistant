@@ -1096,3 +1096,30 @@ def test_a_barcode_has_no_verdict_and_no_price_field(network):
     assert not [m for m in at.markdown if "Goedkoper elders" in m.value or "Je zit al goed" in m.value]
     assert "Je zit al goed" not in texts(at.success) and "Goedkoper elders" not in texts(at.warning)
     assert not any(t.key == "ean_typed_total" for t in at.text_input)
+
+
+# ------------------------------------------------------------------ is it the size he meant?
+
+
+def test_a_size_in_the_link_that_the_product_does_not_have_is_warned_about(network):
+    at = start(KEY)
+    # the fake product is the 500 ml shampoo
+    search(at, "https://www.celini.nl/kerastase-gloss-absolu-shampoo-250ml/p/123")
+    assert not at.exception
+    assert (
+        "Let op: je zocht 250 ml, het gevonden product noemt 500 ml." in texts(at.warning)
+    )
+
+
+def test_the_same_size_gives_no_warning(network):
+    at = start(KEY)
+    search(at, "https://www.celini.nl/kerastase-gloss-absolu-shampoo-500ml/p/123")
+    assert not at.exception
+    assert "Let op: je zocht" not in texts(at.warning)
+
+
+def test_a_product_name_with_another_size_is_warned_about_too(network):
+    at = start(KEY)
+    at.text_input(key="ean_hint").set_value("Kérastase Gloss Absolu shampoo 250 ml")
+    go_button(at).click().run()
+    assert "Let op: je zocht 250 ml" in texts(at.warning)

@@ -10,7 +10,9 @@ from dataclasses import dataclass, replace
 
 import lookup
 import members
+import variant
 import verdict as verdicts
+from linkname import name_from_link
 from choice import effective_offer, is_preferred, recommend
 
 
@@ -55,6 +57,25 @@ def explanation(result):
             "vertrouw je het meest en zij bezorgen gratis."
         )
     return "De goedkoopste leverbare optie, inclusief verzending."
+
+
+def variant_warning(result):
+    """A warning when the product found has another size or pack than the link or name asked for.
+
+    What was asked for is the name that was searched on or, when a link was pasted, the words of
+    its slug (a size in a shop's link is a good sign of the size he is looking at).
+    """
+    if not result.product_title:
+        return None
+    wanted = [result.query] if result.query else []
+    link = getattr(result, "reference_link", None)
+    if link:
+        wanted.append(name_from_link(link))
+    for text in wanted:
+        warning = variant.mismatch(text, result.product_title)
+        if warning:
+            return warning
+    return None
 
 
 def verdict_for(shown, everything=None, typed=""):

@@ -237,6 +237,9 @@ def _show(result):
     result, hidden = lookup_view.apply_member_filter(result, member_list, only_members)
     typed = st.session_state.get(TYPED_TOTAL_KEY, "")
     found = lookup_view.verdict_for(result, everything, typed)
+    warning = lookup_view.variant_warning(result)
+    if warning and result.recommendation is not None:
+        st.warning(warning)
     if found is not None:
         _show_verdict(found, typed)
     shown = getattr(st, lookup_view.severity(result))
