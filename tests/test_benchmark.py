@@ -80,13 +80,13 @@ def test_the_plan_can_be_limited_to_the_verdict_or_development_set_and_to_one_ki
 def test_the_search_budget_is_counted_at_most():
     rows, _ = benchmark.parse_table(TABLE)
     # 2 keyword runs (2 each) + the bol link (2: its page might be readable); magimix and kruidvat links cost nothing
-    assert benchmark.max_searches(benchmark.tasks(rows)) == 6
-    assert benchmark.max_searches(benchmark.tasks(rows, links=False)) == 4
+    assert benchmark.max_searches(benchmark.tasks(rows)) == 9
+    assert benchmark.max_searches(benchmark.tasks(rows, links=False)) == 6
 
 
 def test_a_link_with_a_product_name_in_its_words_costs_searches_too():
     rows, _ = benchmark.parse_table("1\tx\thttps://www.haibu.nl/kerastase-gloss-absolu-drops-45ml.html\t\tdrops")
-    assert benchmark.max_searches(benchmark.tasks(rows)) == 2  # its name is searched
+    assert benchmark.max_searches(benchmark.tasks(rows)) == 3  # its name is searched
 
 
 # ------------------------------------------------------------------ tapping

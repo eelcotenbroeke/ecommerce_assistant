@@ -607,3 +607,91 @@ def test_the_budget_guard_counts_both_steps_for_a_name_alone():
     asked = []
     result = run_by_name(fake, guard=lambda cost: asked.append(cost))
     assert asked == [2] and result.status == lookup.OK
+
+
+# ------------------------------------------------------------------ the next page of the store list
+
+
+class PagedSerp(FakeSerp):
+    """Fake SerpApi whose store list has pages: `pages` maps a next_page_token to the stores of that page."""
+
+    def __init__(self, first, token, pages, **kwargs):
+        super().__init__(shopping=[item("Shop0.nl", 40.0)], stores=first, **kwargs)
+        if token:
+            self.stores["product_results"]["stores_next_page_token"] = token
+        self.pages = pages
+
+    def __call__(self, params):
+        next_token = params.get("next_page_token")
+        if next_token is not None:
+            self.calls.append(params)
+            page = self.pages.get(next_token)
+            if page is None:
+                return None, "SerpApi timeout"
+            stores, token = page
+            product = {"stores": stores}
+            if token:
+                product["stores_next_page_token"] = token
+            return {"product_results": product}, None
+        return super().__call__(params)
+
+
+def first_page():
+    return [store(f"Shop{n}.nl", 40.0 + n, shipping_extracted=0.0) for n in range(13)]
+
+
+def test_the_next_page_of_stores_is_read_when_google_has_more():
+    fake = PagedSerp(first_page(), "T2", {"T2": ([store("Goedkoop.nl", 30.0, shipping_extracted=2.0)], None)})
+    result = run(fake)
+    assert result.status == lookup.OK
+    assert len(result.offers) == 14 and result.recommendation.cheapest.shop == "Goedkoop.nl"
+    assert [c["engine"] for c in fake.calls] == ["google_shopping", "google_immersive_product", "google_immersive_product"]
+    assert fake.calls[2] == {
+        "engine": "google_immersive_product", "page_token": TOKEN, "more_stores": "true", "next_page_token": "T2",
+    }
+    assert "Winkellijst, pagina 2: 1 winkels" in result.steps
+    assert serp.MORE_STORES_NOTE not in result.notes
+
+
+def test_only_one_extra_page_is_followed_and_the_note_says_there_is_more():
+    fake = PagedSerp(first_page(), "T2", {"T2": ([store("Goedkoop.nl", 30.0, shipping_extracted=2.0)], "T3")})
+    result = run(fake)
+    assert len(fake.calls) == 3  # no third page: each page costs a search
+    assert len(result.offers) == 14
+    assert serp.MORE_STORES_NOTE in result.notes
+
+
+def test_a_page_that_costs_more_than_the_budget_allows_is_skipped_with_the_note():
+    fake = PagedSerp(first_page(), "T2", {"T2": ([store("Goedkoop.nl", 30.0)], None)})
+    asked = []
+
+    def guard(cost):
+        asked.append(cost)
+        return "Maandbudget bereikt" if len(asked) >= 2 else None
+
+    result = lookup.lookup(EAN, None, source=serp.serp_source(fake, now=lambda: "NOW", guard=guard))
+    assert result.status == lookup.OK  # one product: no list, so the guard is asked for both steps at once
+    assert len(result.offers) == 13 and "Volgende winkelpagina: niet opgehaald (budget)" in result.steps
+    assert serp.MORE_STORES_NOTE in result.notes
+    assert [c["engine"] for c in fake.calls] == ["google_shopping", "google_immersive_product"]
+
+
+def test_a_failing_next_page_keeps_the_first_page_and_says_there_is_more():
+    fake = PagedSerp(first_page(), "T2", {})  # the token is unknown: the fake answers a timeout
+    result = run(fake)
+    assert result.status == lookup.OK and len(result.offers) == 13
+    assert any(step.startswith("Winkellijst, pagina 2: geen antwoord") for step in result.steps)
+    assert serp.MORE_STORES_NOTE in result.notes
+
+
+def test_a_shop_on_both_pages_keeps_its_cheapest_total():
+    page2 = ([store("Shop0.nl", 35.0, shipping_extracted=0.0)], None)
+    result = run(PagedSerp(first_page(), "T2", {"T2": page2}))
+    assert len(result.offers) == 13
+    assert next(o for o in result.offers if o.shop == "Shop0.nl").price == 35.0
+
+
+def test_without_a_next_page_token_no_extra_search_is_made():
+    fake = PagedSerp(first_page(), None, {})
+    result = run(fake)
+    assert len(fake.calls) == 2 and serp.MORE_STORES_NOTE not in result.notes
