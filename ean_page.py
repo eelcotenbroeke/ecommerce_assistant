@@ -22,12 +22,15 @@ import budget
 import fetching
 import lookup
 import lookup_view
+import members
 import probe_page
 import serp
 
 CACHE_SECONDS = 15 * 60
 LOG_LIMIT = 6  # raw SerpApi answers kept for the download (a lookup makes at most 2)
 TIME_ZONE = "Europe/Amsterdam"
+MEMBERS_ONLY_KEY = "ean_members_only"  # the switch itself (Streamlit forgets it while it is not drawn)
+MEMBERS_KEPT_KEY = "ean_members_only_kept"  # its last value, for a result that shows no switch
 
 
 def _now():
@@ -150,6 +153,11 @@ def _choose(index):
     _remember(key, result)
 
 
+def _members_only():
+    """Whether only Thuiswinkel Waarborg shops are wanted (default yes)."""
+    return st.session_state.get(MEMBERS_ONLY_KEY, st.session_state.get(MEMBERS_KEPT_KEY, True))
+
+
 def _ask_pick(index):
     st.session_state["ean_pick"] = index
 
@@ -167,6 +175,8 @@ def _offer_block(card):
     """One shop in the list: name and total, the line with price/shipping/delivery, details, link."""
     with st.container(border=True):
         st.markdown(f"**{card.shop}** \u00b7 {card.total}" + (f" \u00b7 _{card.badge}_" if card.badge else ""))
+        if card.member:
+            st.caption(f":green[\u2713 {lookup_view.MEMBER_BADGE}]")
         st.caption(card.line)
         if card.title:
             st.write(card.title)
@@ -200,6 +210,10 @@ def _show(result):
     if result.status == lookup.CHOOSE:
         _show_candidates(result)
         return
+    member_list = members.load()
+    # Read before the switch is drawn (below the headline): the answer depends on it.
+    only_members = _members_only()
+    result, hidden = lookup_view.apply_member_filter(result, member_list, only_members)
     shown = getattr(st, lookup_view.severity(result))
     headline = lookup_view.headline(result)
     shown(f"**{headline}**" if headline else result.message)
@@ -208,7 +222,13 @@ def _show(result):
     tip = lookup_view.hint(result)
     if tip:
         st.info(tip)
-    for card in lookup_view.offer_cards(result):
+    if result.offers or hidden:
+        st.toggle("Alleen Thuiswinkel Waarborg-winkels", value=only_members, key=MEMBERS_ONLY_KEY)
+        st.session_state[MEMBERS_KEPT_KEY] = st.session_state[MEMBERS_ONLY_KEY]
+        line = lookup_view.hidden_line(hidden)
+        if line:
+            st.caption(line)
+    for card in lookup_view.offer_cards(result, member_list):
         _offer_block(card)
     product = lookup_view.product_line(result)
     if product:

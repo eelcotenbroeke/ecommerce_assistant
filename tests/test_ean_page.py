@@ -113,6 +113,11 @@ def listed_shops(at):
     return [m.value.split("**")[1] for m in at.markdown if m.value.startswith("**") and " \u00b7 " in m.value]
 
 
+def show_all(at):
+    """Switch 'only Thuiswinkel Waarborg shops' off: the fake shops (Celini, Flaconi) are not members."""
+    return at.toggle(key="ean_members_only").set_value(False).run()
+
+
 def link_buttons(at):
     return {b.proto.label: b.proto.url for b in at.get("link_button")}
 
@@ -231,6 +236,7 @@ def test_with_a_key_the_offers_come_from_google_shopping(network):
     assert not at.exception
     assert len(serp_calls(network)) == 2
     assert SEARCH_URL not in network.calls
+    show_all(at)
     # bol (40,00) is 3,5% above Flaconi (38,63): the owner's rule picks bol
     assert "bol.com: € 40,00" in texts(at.success)
     assert "duurder dan de goedkoopste" in texts(at.markdown)
@@ -497,6 +503,7 @@ def test_tapping_a_product_fetches_its_shops_for_one_more_search(network):
     at.button(key="ean_pick_1").click().run()
     assert not at.exception
     assert len(serp_calls(network)) == 2
+    show_all(at)
     assert "Celini.nl" in listed_shops(at) and "bol.com" in listed_shops(at)
     assert f"Product volgens Google Shopping: **{TITLE}**" in texts(at.markdown)
     assert "controleer of de titel" not in texts(at.info)  # he chose it himself
@@ -515,6 +522,7 @@ def test_another_product_goes_back_to_the_list_without_searching(network):
     assert listed_shops(at) == []
     at.button(key="ean_pick_1").click().run()  # the same product again: from the session's memory
     assert len(serp_calls(network)) == 2
+    show_all(at)
     assert "Celini.nl" in listed_shops(at)
     at.button(key="ean_back").click().run()
     at.button(key="ean_pick_0").click().run()  # a different product costs one more search
@@ -538,6 +546,7 @@ def test_a_product_name_settles_the_choice_without_a_list(network):
     search(at)
     assert len(serp_calls(network)) == 2
     assert pick_buttons(at) == []
+    show_all(at)
     assert "Celini.nl" in listed_shops(at)
 
 
@@ -608,6 +617,7 @@ def test_an_empty_answer_for_the_ean_points_to_the_product_name_field(network):
     at.text_input(key="ean_hint").set_value("Kérastase Gloss Absolu")
     search(at)
     assert serp_queries(network) == [EAN, "Kérastase Gloss Absolu"]
+    show_all(at)
     assert "Celini.nl" in listed_shops(at)
 
 
@@ -677,3 +687,71 @@ def test_the_page_probe_shows_the_manufacturers_code_and_barcode_hints(network):
     captions = texts(at.caption)
     assert "476575-01" in captions
     assert f"Barcode in de paginacode (niet zeker dat het dit product is): {EAN}" in captions
+
+
+# ------------------------------------------------------------------ Thuiswinkel Waarborg members
+
+
+def test_shops_that_are_not_members_are_hidden_by_default_and_the_switch_shows_them(network):
+    at = start(KEY)
+    search(at)
+    assert not at.exception
+    # the fake shops: Celini and Flaconi are not on the list, bol always stays
+    assert listed_shops(at) == ["bol.com"]
+    assert "bol.com: \u20ac 40,00" in texts(at.success)
+    assert "2 winkels verborgen: niet op de ledenlijst van Thuiswinkel Waarborg" in texts(at.caption)
+    toggle = at.toggle(key="ean_members_only")
+    assert toggle.label == "Alleen Thuiswinkel Waarborg-winkels" and toggle.value is True
+    assert len(serp_calls(network)) == 2
+    show_all(at)
+    assert listed_shops(at) == ["bol.com", "Flaconi.nl", "Celini.nl"]
+    assert "verborgen" not in texts(at.caption)
+    assert len(serp_calls(network)) == 2  # the switch is only a view: no new search
+
+
+def test_the_switch_keeps_its_value_for_the_next_search(network):
+    at = start(KEY)
+    search(at)
+    show_all(at)
+    search(at, "abc")  # a warning without offers: no switch on the screen for a moment
+    assert not at.toggle
+    search(at)  # the same EAN again, from the session's memory
+    assert at.toggle(key="ean_members_only").value is False
+    assert "Flaconi.nl" in listed_shops(at)
+
+
+def test_a_member_gets_a_badge(network):
+    network.serp_answers["google_immersive_product"] = (
+        200,
+        json.dumps(
+            {
+                "product_results": {
+                    "stores": [
+                        store("Kruidvat.nl", 33.0, shipping_extracted=0.0),
+                        store("Celini.nl", 30.0, shipping_extracted=3.95),
+                    ]
+                }
+            }
+        ),
+    )
+    at = start(KEY)
+    search(at)
+    assert listed_shops(at) == ["Kruidvat.nl"]
+    assert texts(at.caption).count(":green[\u2713 Thuiswinkel Waarborg]") == 1
+    # the recommendation is made among the members: Celini (33,95 with shipping) is hidden anyway
+    assert "Kruidvat.nl: \u20ac 33,00" in texts(at.success)
+
+
+def test_when_no_member_has_an_offer_the_screen_says_so_and_the_switch_shows_the_rest(network):
+    network.serp_answers["google_immersive_product"] = (
+        200,
+        json.dumps({"product_results": {"stores": [store("Celini.nl", 30.0, shipping_extracted=3.95)]}}),
+    )
+    at = start(KEY)
+    search(at)
+    assert listed_shops(at) == []
+    assert "Geen leverbaar aanbod bij een Thuiswinkel Waarborg-winkel." in texts(at.warning)
+    assert "2 winkels verborgen" in texts(at.caption)  # Celini and Flaconi (from Google's first answer)
+    show_all(at)
+    assert "Celini.nl" in listed_shops(at)
+    assert "Celini.nl: \u20ac 33,95" in texts(at.success)

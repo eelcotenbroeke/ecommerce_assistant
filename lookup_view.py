@@ -6,10 +6,11 @@ owner reads is covered by tests.
 from __future__ import annotations
 
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import lookup
-from choice import effective_offer, is_preferred
+import members
+from choice import effective_offer, is_preferred, recommend
 
 
 def eur(value):
@@ -121,6 +122,7 @@ class OfferCard:
     details: tuple[str, ...]
     url: str | None  # link to the shop (http/https only)
     deliverable: bool
+    member: bool = False  # on the Thuiswinkel Waarborg member list
 
 
 def _same_text(a, b):
@@ -137,7 +139,47 @@ def _web_link(url):
     return url if str(url or "").startswith(("https://", "http://")) else None
 
 
-def offer_cards(result):
+MEMBER_BADGE = "Thuiswinkel Waarborg"
+NO_MEMBER_OFFER = "Geen leverbaar aanbod bij een Thuiswinkel Waarborg-winkel."
+
+
+def is_member_offer(offer, member_list):
+    """Shown while only members are wanted: on the list, or a shop the owner trusts anyway."""
+    return is_preferred(offer.shop) or (
+        member_list is not None and member_list.is_member(offer.shop, offer.url)
+    )
+
+
+def apply_member_filter(result, member_list, only_members=True):
+    """(result, hidden): without the offers of shops that are not members, when only members are
+    wanted. The recommendation is made again among the offers left, so it never names a hidden
+    shop. bol and Amazon always stay."""
+    if not only_members or member_list is None or not result.offers:
+        return result, 0
+    kept = tuple(offer for offer in result.offers if is_member_offer(offer, member_list))
+    hidden = len(result.offers) - len(kept)
+    if not hidden:
+        return result, 0
+    advice = recommend(kept)
+    fields = {"offers": kept, "recommendation": advice}
+    if advice is None and result.recommendation is not None:
+        fields.update(status=lookup.UNAVAILABLE, message=NO_MEMBER_OFFER)
+    return replace(result, **fields), hidden
+
+
+def hidden_line(hidden):
+    """Why offers are missing, with the date of the list they were checked against."""
+    if not hidden:
+        return None
+    shops = "1 winkel" if hidden == 1 else f"{hidden} winkels"
+    return (
+        f"{shops} verborgen: niet op de ledenlijst van Thuiswinkel Waarborg "
+        f"(lijst van {members.LIST_DATE[8:]}-{members.LIST_DATE[5:7]}-{members.LIST_DATE[:4]}). "
+        "Zet de schakelaar uit om ze te tonen."
+    )
+
+
+def offer_cards(result, member_list=None):
     """One OfferCard per offer: the recommended one first, then deliverable ones cheapest first,
     then the ones that cannot be had."""
     advice = result.recommendation
@@ -169,6 +211,7 @@ def offer_cards(result):
                 details=tuple(offer.details),
                 url=_web_link(offer.url),
                 deliverable=offer.deliverable,
+                member=member_list is not None and member_list.is_member(offer.shop, offer.url),
             )
         )
     return cards
