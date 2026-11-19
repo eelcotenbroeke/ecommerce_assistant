@@ -667,3 +667,13 @@ def test_an_empty_probe_does_nothing(network):
     assert not at.exception
     assert network.calls == []
     assert not at.get("download_button")
+
+
+def test_the_page_probe_shows_the_manufacturers_code_and_barcode_hints(network):
+    html = PAGE_OK.replace("</body>", '<script>d={"ean":"%s"}</script><table><tr><th>Fabrikantcode</th><td>476575-01</td></tr></table></body>' % EAN)
+    network.answers["https://www.coolblue.nl/product/2/y.html"] = (200, html)
+    at = start()
+    probe_links(at, "https://www.coolblue.nl/product/2/y.html")
+    captions = texts(at.caption)
+    assert "476575-01" in captions
+    assert f"Barcode in de paginacode (niet zeker dat het dit product is): {EAN}" in captions
