@@ -909,7 +909,7 @@ def test_the_testrun_shows_the_plan_and_what_it_costs_at_most(network):
     at = start(KEY)
     at.text_area(key="bench_text").set_value(TESTRUN_TABLE).run()
     # 2 keyword runs (2 searches each) and the haibu link, whose words hold a product name; kruidvat's holds none
-    assert "4 runs, maximaal 6 SerpApi-zoekopdrachten" in texts(at.info)
+    assert "4 runs, maximaal 9 SerpApi-zoekopdrachten" in texts(at.info)
     assert "nog 88 over" in texts(at.info)
     assert serp_calls(network) == []  # nothing runs before the button
 

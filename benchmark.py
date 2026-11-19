@@ -26,7 +26,7 @@ COLUMNS = ("nr", "categorie", "url", "zoekwoorden", "product")
 LINK = "link"
 KEYWORDS = "zoekwoorden"
 MIN_PICK_SCORE = 0.5  # a tapped candidate with a lower share of the product's words is marked as doubtful
-SEARCHES_PER_LOOKUP = 2  # candidate list plus the shops of the chosen product
+SEARCHES_PER_LOOKUP = 3  # at most: candidate list, the shops of the chosen product, one next page of shops
 
 ALL = "alle"
 EVEN = "even"

@@ -41,6 +41,11 @@ NOT_FOUND_BY_EAN = (
 )
 NOT_FOUND_BY_NAME = "Google Shopping vond niets voor \u201c{}\u201d. Probeer een andere naam, bijvoorbeeld merk en productnaam."
 MAX_CANDIDATES = 12  # shown to the owner
+MAX_EXTRA_STORE_PAGES = 1  # next pages of the store list that are followed (one search each)
+MORE_STORES_NOTE = (
+    "Google kent meer winkels voor dit product dan hier staan. Bekijk alle winkels via de knop "
+    "naar Google Shopping."
+)
 MIN_AUTO_WORDS = 4  # a shorter name ("segafredo bonen") names a brand and a kind, not one product
 MIN_AUTO_COVERAGE = 1.0  # share of the product-name words a title needs for a pick: all of them
 MIN_AUTO_MARGIN = 0.25  # how far the best title must lead the second one
@@ -360,8 +365,10 @@ def auto_pick(ranked, hint=None):
 # --------------------------------------------------------------------------- the source
 
 
-def _finish(candidate, fetch_json, now, guard, steps, check_note, query=None):
-    """Step 2: the shops for one product."""
+def _finish(candidate, fetch_json, now, guard, steps, check_note, query=None, page_guard=None):
+    """Step 2: the shops for one product. Google shows 13 shops at most per answer; when it says
+    there are more, `MAX_EXTRA_STORE_PAGES` next pages are read (each costs one search, checked by
+    `page_guard`); when there are still more, the note says so."""
     notes = [CHECK_TITLE_NOTE] if check_note else []
     offers = {}
     if candidate.token:
@@ -385,6 +392,34 @@ def _finish(candidate, fetch_json, now, guard, steps, check_note, query=None):
             steps.append(f"Winkellijst: {len(stores)} winkels")
             for store in stores:
                 _add(offers, offer_from_store(store))
+            more = product.get("stores_next_page_token") if isinstance(product, dict) else None
+            pages = 0
+            while more and pages < MAX_EXTRA_STORE_PAGES:
+                reason = page_guard(SEARCH_COST) if page_guard else None
+                if reason:
+                    steps.append("Volgende winkelpagina: niet opgehaald (budget)")
+                    break
+                pages += 1
+                page_data, page_error = fetch_json(
+                    {
+                        "engine": "google_immersive_product",
+                        "page_token": candidate.token,
+                        "more_stores": "true",
+                        "next_page_token": more,
+                    }
+                )
+                if page_data is None:
+                    steps.append(f"Winkellijst, pagina {pages + 1}: geen antwoord ({page_error})")
+                    break
+                page_product = page_data.get("product_results")
+                page_stores = page_product.get("stores") if isinstance(page_product, dict) else None
+                page_stores = [s for s in page_stores or [] if isinstance(s, dict)]
+                steps.append(f"Winkellijst, pagina {pages + 1}: {len(page_stores)} winkels")
+                for store in page_stores:
+                    _add(offers, offer_from_store(store))
+                more = page_product.get("stores_next_page_token") if isinstance(page_product, dict) else None
+            if more:
+                notes.append(MORE_STORES_NOTE)
     items = [item for item in candidate.items if isinstance(item, dict)]
     _fill_from_items(offers, items)
     stores_seen = set(offers)
@@ -460,7 +495,7 @@ def serp_source(fetch_json, now=datetime.now, guard=None, hint=None):
             if len(ranked) > 1:
                 steps.append("Product gekozen op je productnaam")
             # the guard above already looked at both steps: no second look at the account
-            return _finish(picked, fetch_json, now, None, steps, check_note=True, query=query)
+            return _finish(picked, fetch_json, now, None, steps, check_note=True, query=query, page_guard=guard)
 
         metadata = data.get("search_metadata")
         see_all = _https(metadata.get("google_shopping_url")) if isinstance(metadata, dict) else None
@@ -468,7 +503,7 @@ def serp_source(fetch_json, now=datetime.now, guard=None, hint=None):
             tuple(ranked[:MAX_CANDIDATES]),
             SOURCE_NAME,
             lambda candidate, steps2: _finish(
-                candidate, fetch_json, now, guard, steps2, check_note=False, query=query
+                candidate, fetch_json, now, guard, steps2, check_note=False, query=query, page_guard=guard
             ),
             product_url=see_all,
             query=query,
