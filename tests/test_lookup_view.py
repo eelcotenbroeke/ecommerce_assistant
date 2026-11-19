@@ -180,3 +180,12 @@ def test_candidate_cards_show_shops_and_price_range():
         "",
     ]
     assert [c.thumbnail for c in cards] == ["https://img.example/1.jpg", None, None]
+
+
+def test_source_line_names_the_search_text_only_when_it_was_not_the_ean():
+    plain = result(ean="3474637283414", source="Google Shopping")
+    assert view.source_line(plain) == "Gezocht op EAN 3474637283414 \u00b7 Bron: Google Shopping"
+    named = result(ean="3474637283414", source="Google Shopping", query="K\u00e9rastase Gloss Absolu")
+    assert view.source_line(named) == (
+        "Gezocht op EAN 3474637283414 \u00b7 Zoekterm bij Google: K\u00e9rastase Gloss Absolu \u00b7 Bron: Google Shopping"
+    )

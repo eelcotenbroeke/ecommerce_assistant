@@ -104,3 +104,17 @@ def test_tags_and_the_shops_own_conditions_are_in_the_details():
     assert "Populairst" in offer.details
     assert any("Gratis bezorging bij bestellingen van" in d for d in offer.details)
     assert len(offer.details) <= serp.MAX_DETAILS
+
+
+def test_a_real_empty_answer_for_a_bare_ean_is_not_found_and_points_to_the_product_name():
+    empty = json.loads((Path(__file__).parent / "data" / "serp_real_4013594586856_empty.json").read_text(encoding="utf-8"))
+    calls = []
+
+    def fetch(params):
+        calls.append(params)
+        return {"search_information": empty["search_information"], "error": empty["error"]}, empty["error"]
+
+    result = lookup.lookup("4013594586856", None, source=serp.serp_source(fetch, now=lambda: "NOW"))
+    assert result.status == lookup.NOT_FOUND
+    assert "Productnaam" in result.message
+    assert [c["engine"] for c in calls] == ["google_shopping"]  # no second search for nothing

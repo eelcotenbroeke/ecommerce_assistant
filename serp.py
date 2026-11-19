@@ -34,6 +34,12 @@ CHECK_TITLE_NOTE = (
     "Google Shopping geeft de EAN niet terug: controleer of de titel bij je product past."
 )
 SEARCH_COST = 1  # one SerpApi search per step
+MAX_QUERY_CHARS = 120  # of the owner's product name, as sent to Google
+NOT_FOUND_BY_EAN = (
+    "Google Shopping vond niets voor deze EAN. Vul bij \u201cProductnaam\u201d de naam van het product in "
+    "(merk en productnaam) en zoek opnieuw: dan zoekt Google op de naam."
+)
+NOT_FOUND_BY_NAME = "Google Shopping vond niets voor \u201c{}\u201d. Probeer een andere naam, bijvoorbeeld merk en productnaam."
 MAX_CANDIDATES = 12  # shown to the owner
 MIN_AUTO_COVERAGE = 0.75  # share of the owner's product-name words a title needs for a pick
 
@@ -347,7 +353,7 @@ def auto_pick(ranked, hint=None):
 # --------------------------------------------------------------------------- the source
 
 
-def _finish(candidate, fetch_json, now, guard, steps, check_note):
+def _finish(candidate, fetch_json, now, guard, steps, check_note, query=None):
     """Step 2: the shops for one product."""
     notes = [CHECK_TITLE_NOTE] if check_note else []
     offers = {}
@@ -355,7 +361,7 @@ def _finish(candidate, fetch_json, now, guard, steps, check_note):
         reason = guard(SEARCH_COST) if guard else None
         if reason:
             steps.append("Winkellijst: niet opgehaald (budget)")
-            return Failure(SOURCE_ERROR, reason, SOURCE_NAME, candidate.product_link)
+            return Failure(SOURCE_ERROR, reason, SOURCE_NAME, candidate.product_link, query)
         stores_data, stores_error = fetch_json(
             {"engine": "google_immersive_product", "page_token": candidate.token, "more_stores": "true"}
         )
@@ -386,6 +392,7 @@ def _finish(candidate, fetch_json, now, guard, steps, check_note):
             "Google Shopping vond het product, maar geen bruikbare prijzen.",
             SOURCE_NAME,
             candidate.product_link,
+            query,
         )
     return Found(
         tuple(offers.values()),
@@ -394,6 +401,7 @@ def _finish(candidate, fetch_json, now, guard, steps, check_note):
         read_at=now(),
         title=candidate.title,
         notes=tuple(notes),
+        query=query,
     )
 
 
@@ -405,24 +413,30 @@ def serp_source(fetch_json, now=datetime.now, guard=None, hint=None):
     product name, if he gave one: it ranks the candidates and can settle the choice.
     """
 
+    name = _clip(hint, MAX_QUERY_CHARS) if hint and hint.strip() else None
+
     def source(ean, steps):
+        # With the owner's product name Google is asked for that name: Google does not search
+        # on the barcode itself (for one real EAN it gave 40 loosely related products, for
+        # another nothing at all), so the name is the more reliable question.
+        query = name
         # step 1 plus step 2 of the product that gets picked: the guard looks at both
         reason = guard(2 * SEARCH_COST) if guard else None
         if reason:
             steps.append("Google Shopping: niet gezocht (budget)")
-            return Failure(SOURCE_ERROR, reason, SOURCE_NAME)
-        data, error = fetch_json({"engine": "google_shopping", "q": ean, "hl": "nl", "gl": "nl"})
+            return Failure(SOURCE_ERROR, reason, SOURCE_NAME, query=query)
+        data, error = fetch_json({"engine": "google_shopping", "q": query or ean, "hl": "nl", "gl": "nl"})
         if data is None:
             steps.append("Google Shopping: geen antwoord")
             return Failure(
-                SOURCE_ERROR, f"Google Shopping (SerpApi) gaf geen antwoord: {error}", SOURCE_NAME
+                SOURCE_ERROR, f"Google Shopping (SerpApi) gaf geen antwoord: {error}", SOURCE_NAME, query=query
             )
         items = [item for item in data.get("shopping_results") or [] if isinstance(item, dict)]
         if not items:
             steps.append("Google Shopping: 0 resultaten")
             if error and "any results" not in str(error).lower():
-                return Failure(SOURCE_ERROR, f"SerpApi meldt: {error}", SOURCE_NAME)
-            return Failure(NOT_FOUND, "Google Shopping vond niets voor deze EAN.", SOURCE_NAME)
+                return Failure(SOURCE_ERROR, f"SerpApi meldt: {error}", SOURCE_NAME, query=query)
+            return Failure(NOT_FOUND, NOT_FOUND_BY_NAME.format(query) if query else NOT_FOUND_BY_EAN, SOURCE_NAME, query=query)
 
         ranked = rank(candidates(items), hint)
         steps.append(f"Google Shopping: {len(items)} resultaten, {len(ranked)} producten")
@@ -431,15 +445,18 @@ def serp_source(fetch_json, now=datetime.now, guard=None, hint=None):
             if len(ranked) > 1:
                 steps.append("Product gekozen op je productnaam")
             # the guard above already looked at both steps: no second look at the account
-            return _finish(picked, fetch_json, now, None, steps, check_note=True)
+            return _finish(picked, fetch_json, now, None, steps, check_note=True, query=query)
 
         metadata = data.get("search_metadata")
         see_all = _https(metadata.get("google_shopping_url")) if isinstance(metadata, dict) else None
         return Choose(
             tuple(ranked[:MAX_CANDIDATES]),
             SOURCE_NAME,
-            lambda candidate, steps2: _finish(candidate, fetch_json, now, guard, steps2, check_note=False),
+            lambda candidate, steps2: _finish(
+                candidate, fetch_json, now, guard, steps2, check_note=False, query=query
+            ),
             product_url=see_all,
+            query=query,
         )
 
     return source
