@@ -84,6 +84,11 @@ def test_the_search_budget_is_counted_at_most():
     assert benchmark.max_searches(benchmark.tasks(rows, links=False)) == 4
 
 
+def test_a_link_with_a_product_name_in_its_words_costs_searches_too():
+    rows, _ = benchmark.parse_table("1\tx\thttps://www.haibu.nl/kerastase-gloss-absolu-drops-45ml.html\t\tdrops")
+    assert benchmark.max_searches(benchmark.tasks(rows)) == 2  # its name is searched
+
+
 # ------------------------------------------------------------------ tapping
 
 

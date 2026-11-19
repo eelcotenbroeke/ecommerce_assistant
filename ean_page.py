@@ -414,7 +414,7 @@ def render():
         # nested"). There is nothing to show without a session anyway.
         return
     st.title("\U0001f3af Prijscheck via EAN")
-    st.caption("Plak een bol-link, een Amazon-link of een EAN, of vul alleen een productnaam in.")
+    st.caption("Plak de link van een product (van elke winkel), een EAN of een productnaam.")
     using_serp = bool(_api_key())
     if using_serp and "serp_account" not in st.session_state:
         _refresh_account()
@@ -428,7 +428,7 @@ def render():
     # In a form the keyboard's Enter key searches too, and the text is only read when the button
     # is tapped: outside a form a phone could show the result of the previous input.
     form = st.form("ean_form")
-    text = form.text_input("bol-link, Amazon-link of EAN", value=shared, key="ean_text", placeholder="Plak hier")
+    text = form.text_input("Link, EAN of productnaam", value=shared, key="ean_text", placeholder="Plak hier")
     hint = form.text_input(
         "Productnaam (optioneel)",
         key="ean_hint",
