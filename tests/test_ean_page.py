@@ -908,7 +908,8 @@ def test_the_testrun_is_only_there_with_a_key(network):
 def test_the_testrun_shows_the_plan_and_what_it_costs_at_most(network):
     at = start(KEY)
     at.text_area(key="bench_text").set_value(TESTRUN_TABLE).run()
-    assert "4 runs, maximaal 4 SerpApi-zoekopdrachten" in texts(at.info)  # 2 keyword runs; the links of kruidvat and haibu cost none
+    # 2 keyword runs (2 searches each) and the haibu link, whose words hold a product name; kruidvat's holds none
+    assert "4 runs, maximaal 6 SerpApi-zoekopdrachten" in texts(at.info)
     assert "nog 88 over" in texts(at.info)
     assert serp_calls(network) == []  # nothing runs before the button
 
@@ -932,14 +933,19 @@ def test_the_testrun_runs_every_row_on_the_keywords_and_on_the_link(network):
     assert first["lijst_getoond"] and first["gekozen"]["plaats_in_lijst"] == 1  # both products fit the keywords: a list
     assert second["lijst_getoond"] and second["gekozen"]["plaats_in_lijst"] == 2  # and the truth says the masque
     assert first["zoekopdrachten"] == 2 and len(first["ruwe_antwoorden"]) == 2 and first["holdout"] is False
-    # the links of shops the app does not know are rejected without a request
+    # a link without a product name in its words is refused without a request; one with a name is searched on it
     assert link["status"] == "invalid_input" and link["zoekopdrachten"] == 0 and link["ruwe_antwoorden"] == []
-    assert len(serp_calls(network)) == 4
+    assert "Productnaam" in link["melding"]
+    named = records[3]
+    assert named["soort"] == "link" and named["zoekterm"] == "kerastase drops" and named["zoekopdrachten"] == 2
+    assert named["status"] == "ok" and named["lijst_getoond"] is True  # the name fits two products: a list, then the tap
+    assert any("Productnaam uit de link: kerastase drops" in step for step in named["stappen"])
+    assert len(serp_calls(network)) == 6
     assert at.session_state["bench_running"] is False
     meta = at.session_state["bench_meta"]
-    assert meta["runs_gedraaid"] == 4 and meta["zoekopdrachten"] == 4 and meta["problemen_bij_het_lezen"] == []
+    assert meta["runs_gedraaid"] == 4 and meta["zoekopdrachten"] == 6 and meta["problemen_bij_het_lezen"] == []
     assert "budget_voor" in meta and "budget_na" in meta
-    assert "4 runs klaar, 4 zoekopdrachten gebruikt." in texts(at.caption)
+    assert "4 runs klaar, 6 zoekopdrachten gebruikt." in texts(at.caption)
     assert len(at.get("download_button")) >= 1
 
 
@@ -990,3 +996,38 @@ def test_a_table_with_problems_says_so_and_a_missing_column_blocks_the_start(net
     at.text_area(key="bench_text").set_value("nr\turl\tzoekwoorden\n1\thttps://x.nl\tjas").run()
     assert "product" in texts(at.warning)
     assert at.button(key="bench_start").disabled
+
+
+# ------------------------------------------------------------------ a link of any shop
+
+
+def test_a_link_of_a_shop_that_blocks_the_app_is_searched_on_the_words_of_the_link(network):
+    network.answers[BOL_LINK] = (403, "nee")
+    at = start(KEY)
+    search(at, BOL_LINK)
+    assert not at.exception
+    assert serp_queries(network) == ["kerastase gloss absolu shampoo"]
+    caption = texts(at.caption)
+    assert "Zoekterm bij Google: kerastase gloss absolu shampoo" in caption and "Gezocht op EAN" not in caption
+    assert network.calls.count(BOL_LINK) == 1 and SEARCH_URL not in network.calls  # bol asked once, no Beslist
+    show_all(at)
+    assert "Celini.nl" in listed_shops(at)
+
+
+def test_a_link_of_a_shop_nobody_taught_the_app_is_searched_without_reading_its_page(network):
+    link = "https://www.kruidvat.nl/kerastase-gloss-absolu-shampoo/p/130611"
+    at = start(KEY)
+    search(at, link)
+    assert not at.exception
+    assert serp_queries(network) == ["kerastase gloss absolu shampoo"]
+    assert link not in network.calls  # the page itself is never requested
+
+
+def test_a_link_without_a_name_in_its_words_says_what_to_do(network):
+    at = start(KEY)
+    search(at, "https://www.my-origines.com/nl/calendula-P0300036.html")
+    assert "Productnaam" in texts(at.warning)
+    assert serp_calls(network) == []
+
+
+BOL_LINK = "https://www.bol.com/nl/nl/p/kerastase-gloss-absolu-shampoo/9300000012345678/"

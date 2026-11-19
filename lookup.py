@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 from beslist import Offer, find_product_url, parse_offers, product_ean, search_url
 from choice import TOLERANCE, Recommendation, recommend
 from ean import extract_ids, normalize_gtin, parse_product_url
+from linkname import looks_like_link, name_from_link
 from pageprobe import looks_blocked, read_page
 
 PAUSE_SECONDS = 2.0  # between the two requests to Beslist
@@ -150,6 +151,14 @@ NAME_FROM_AMAZON_NOTE = (
     "Controleer of het gevonden product klopt."
 )
 
+NAME_FROM_LINK_NOTE = (
+    "De winkelpagina is niet gelezen: er is gezocht op de woorden uit de link, niet op een EAN. "
+    "Controleer of het gevonden product klopt (type, formaat, aantal)."
+)
+NO_NAME_IN_LINK = (
+    "Uit deze link kan ik geen productnaam halen. Vul bij \u201cProductnaam\u201d de naam van het "
+    "product in, of plak een EAN."
+)
 NAME_NEEDS_GOOGLE = (
     "Zoeken op productnaam kan alleen via Google Shopping (SerpApi): zet SERPAPI_KEY onder "
     "Settings \u2192 Secrets. Of plak een bol-link, een Amazon-link of een EAN."
@@ -239,7 +248,7 @@ def _ean_from_input(text, fetch, steps):
         return None, (), LookupResult(status, message, steps=tuple(steps)), None
 
     if not cleaned:
-        return stop(INVALID_INPUT, "Plak een bol- of Amazon-productlink of een EAN, of vul een productnaam in.")
+        return stop(INVALID_INPUT, "Plak de link van een product, een EAN of een productnaam.")
     if re.fullmatch(r"[\d\s\-]+", cleaned):
         gtin = normalize_gtin(cleaned)
         if gtin:
@@ -337,23 +346,40 @@ def lookup(text, fetch, sleep=time.sleep, now=datetime.now, tolerance=TOLERANCE,
     (name: the page's own title, or None): a source that can search on a name does so, the others
     ask for the EAN.
 
+    When the page cannot be used (bol or another shop refuses us, the shop is not known, or an Amazon
+    page has neither EAN nor title) and the source can search on a name, the words of the link
+    itself are the name (`linkname.name_from_link`, no request to the shop).
+
     With `by_name` there is no link or EAN: the owner gave a product name and the source (which
     holds that name) searches on it. Only a source that can do that works: Beslist cannot.
     """
     steps = []
+    can_search_names = source is not None
+    from_link = False
     if by_name:
         if source is None:
             return LookupResult(NEEDS_EAN, NAME_NEEDS_GOOGLE, steps=tuple(steps))
         ean, child_gtins, early, page_name = None, (), None, None
     else:
         ean, child_gtins, early, page_name = _ean_from_input(text, fetch, steps)
+        # A page that cannot be used (a shop that refuses us, a shop we do not know, a page
+        # without EAN or title): the words of the link itself are still a name to search on.
+        if can_search_names and not ean and not page_name and looks_like_link(text):
+            if early is None or early.status in (NEEDS_EAN, INVALID_INPUT):
+                name = name_from_link(text)
+                if name:
+                    steps.append(f"Productnaam uit de link: {name}")
+                    ean, child_gtins, early, page_name, from_link = None, (), None, name, True
+                elif early is not None and early.status == INVALID_INPUT:
+                    return LookupResult(INVALID_INPUT, NO_NAME_IN_LINK, steps=tuple(steps))
     if early is not None:
         return early
     source = source or beslist_source(fetch, sleep, now)
 
     found = source(ean, steps) if ean else source(None, steps, page_name=page_name)
     if not ean and not by_name and isinstance(found, (Found, Choose)):
-        found = replace(found, notes=(NAME_FROM_AMAZON_NOTE, *found.notes))
+        note = NAME_FROM_LINK_NOTE if from_link else NAME_FROM_AMAZON_NOTE
+        found = replace(found, notes=(note, *found.notes))
     if isinstance(found, Failure):
         return _result(
             steps, ean, child_gtins, found.status, found.message,

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import serp
 from choice import effective_offer, is_preferred
 from ean import parse_product_url
+from linkname import name_from_link
 
 COLUMNS = ("nr", "categorie", "url", "zoekwoorden", "product")
 LINK = "link"
@@ -122,10 +123,11 @@ def text_of(row, mode):
 
 
 def max_searches(plan):
-    """Most SerpApi searches the plan can cost: a keyword run, and a link of a shop whose page may be read."""
+    """Most SerpApi searches the plan can cost: a keyword run, a link whose page may be read
+    (bol, Amazon) and a link with a product name in its words (that name is searched)."""
     total = 0
     for row, mode in plan:
-        if mode == KEYWORDS or parse_product_url(row.url) is not None:
+        if mode == KEYWORDS or parse_product_url(row.url) is not None or name_from_link(row.url):
             total += SEARCHES_PER_LOOKUP
     return total
 

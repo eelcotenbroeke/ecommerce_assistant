@@ -271,6 +271,78 @@ def test_a_blocked_amazon_page_never_gives_a_name():
     assert result.status == lookup.NEEDS_EAN and source.calls == []
 
 
+# ------------------------------------------------------------------ the words of the link as a name
+
+KRUIDVAT_URL = "https://www.kruidvat.nl/biodermal-p-cl-e-creme/p/130611"
+LINK_NAME = "biodermal p cl e creme"
+
+
+def test_a_shop_that_is_not_known_is_searched_on_the_words_of_its_link_without_reading_the_page():
+    net = Net({})
+    source = NameSource()
+    result = net.lookup(KRUIDVAT_URL, source=source)
+    assert source.calls == [(None, LINK_NAME)]
+    assert result.status == lookup.OK and result.ean is None and result.query == LINK_NAME
+    assert lookup.NAME_FROM_LINK_NOTE in result.notes and lookup.NAME_FROM_AMAZON_NOTE not in result.notes
+    assert f"Productnaam uit de link: {LINK_NAME}" in result.steps
+    assert net.calls == [] and net.sleeps == []  # the shop is never asked for its page
+
+
+def test_a_blocked_bol_page_falls_back_on_the_words_of_the_link():
+    net = Net({BOL_URL: (403, "nee")})
+    source = NameSource()
+    result = net.lookup(BOL_URL, source=source)
+    assert net.calls == [BOL_URL]  # asked once, honestly, and not again
+    assert source.calls == [(None, "kerastase gloss absolu")]
+    assert result.status == lookup.OK and lookup.NAME_FROM_LINK_NOTE in result.notes
+    assert any("bol-pagina: HTTP 403" in step for step in result.steps)  # the block stays in the log
+
+
+def test_a_bol_page_that_works_is_still_read_for_its_ean():
+    net = Net({BOL_URL: (200, bol_page())})
+    source = NameSource()
+    net.lookup(BOL_URL, source=source)
+    assert source.calls == [(EAN, None)]  # an EAN beats the words of the link
+
+
+def test_a_link_without_a_name_in_its_words_is_refused_with_the_way_out():
+    net = Net({})
+    source = NameSource()
+    result = net.lookup("https://www.my-origines.com/nl/calendula-P0300036.html", source=source)
+    assert result.status == lookup.INVALID_INPUT and result.message == lookup.NO_NAME_IN_LINK
+    assert source.calls == [] and net.calls == []
+
+
+def test_without_a_source_that_can_search_names_the_old_answers_stay():
+    net = Net({BOL_URL: (403, "nee")})
+    assert net.lookup(BOL_URL).status == lookup.NEEDS_EAN  # Beslist cannot search on a name
+    unknown = net.lookup(KRUIDVAT_URL)
+    assert unknown.status == lookup.INVALID_INPUT and "Andere winkels worden nog niet herkend" in unknown.message
+
+
+def test_an_amazon_page_without_ean_or_title_falls_back_on_the_slug_of_the_link():
+    link = "https://www.amazon.nl/Anker-PowerWave-Wireless-Charger/dp/B07THHQMHM"
+    net = Net({"https://www.amazon.nl/dp/B07THHQMHM": (200, "<html>geen barcode</html>")})
+    source = NameSource()
+    result = net.lookup(link, source=source)
+    assert source.calls == [(None, "anker powerwave wireless charger")]
+    assert lookup.NAME_FROM_LINK_NOTE in result.notes
+
+
+def test_the_title_of_an_amazon_page_wins_over_the_slug_of_its_link():
+    net = Net({"https://www.amazon.nl/dp/B01M635J8I": (200, amazon_page_without_ean())})
+    source = NameSource()
+    result = net.lookup(AMAZON_LINK_FROM_PHONE, source=source)
+    assert source.calls[0][1].startswith("FPD 40 Inch Smart TV") and lookup.NAME_FROM_AMAZON_NOTE in result.notes
+
+
+def test_an_invalid_barcode_never_becomes_a_name():
+    net = Net({})
+    source = NameSource()
+    result = net.lookup("1234567890123", source=source)
+    assert result.status == lookup.INVALID_INPUT and source.calls == []
+
+
 # ------------------------------------------------------------------ a product name instead of a link
 
 
