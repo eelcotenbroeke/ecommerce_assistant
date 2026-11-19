@@ -1,8 +1,11 @@
 import json
+from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
 import pageprobe as pp
+from ean import normalize_gtin
 
 EAN = "3474637283414"
 
@@ -232,3 +235,61 @@ def test_barcode_hints_are_distinct_capped_and_need_a_valid_check_digit():
     assert len(hints) == pp.MAX_BARCODE_HINTS
     assert [h[0] for h in hints] == [v for v in valid if pp.ean.normalize_gtin(v)][: pp.MAX_BARCODE_HINTS]
     assert "3474637283415" not in [h[0] for h in pp.barcode_hints(bad)]
+
+
+# ------------------------------------------------------------------ real answers of 2026-11-19 (eight big shops)
+
+
+def _big_shops():
+    path = Path(__file__).parent / "data" / "probe_real_big_shops.json"
+    return {urlparse(e["link"]).hostname: e for e in json.loads(path.read_text(encoding="utf-8"))["probe"]}
+
+
+def test_amazon_title_loses_its_site_tail():
+    amazon = _big_shops()["www.amazon.nl"]
+    assert amazon["gevonden"]["naam"].endswith(": Amazon.nl: Health & Personal Care")  # what the old parser showed
+    cleaned = pp.clean_title(amazon["pagina"]["title"])
+    assert cleaned == "HG Gel Unblocker | Removes Clogging in Sink & Toilet | 1L"
+    assert pp.clean_title("Dyson V15 Detect Fluffy | Coolblue | Stofzuigers") == "Dyson V15 Detect Fluffy | Coolblue | Stofzuigers"
+    assert pp.clean_title("Zoek : Amazon.de") == "Zoek"
+    assert pp.clean_title(None) == ""
+
+
+def test_read_page_gives_the_amazon_name_without_the_tail():
+    html = (
+        "<html><head><title>HG Gel Unblocker : Amazon.nl: Health &amp; Personal Care</title></head><body><table><tr>"
+        "<td><span>Global Trade Identification Number</span></td><td><span>08711577266042</span></td></tr></table>"
+        "</body></html>"
+    )
+    report = pp.read_page("https://www.amazon.nl/dp/B0CBQ252DS", 200, html)
+    assert report.verdict == pp.READABLE
+    assert report.ean == "8711577266042" and report.ean_source == "spec-table"
+    assert report.name == "HG Gel Unblocker" and report.name_source == "title"
+
+
+def test_the_big_shops_as_the_app_saw_them():
+    shops = _big_shops()
+    verdicts = {host: e["oordeel"] for host, e in shops.items()}
+    assert verdicts == {
+        "www.bol.com": "blocked",
+        "www.amazon.nl": "readable",
+        "www.kruidvat.nl": "blocked",
+        "www.etos.nl": "no_answer",
+        "www.ah.nl": "blocked",
+        "www.jumbo.com": "no_answer",
+        "www.mediamarkt.nl": "blocked",
+        "www.hema.nl": "readable",
+    }
+    # the barcodes the readable shops gave are real, valid ones
+    assert normalize_gtin(shops["www.amazon.nl"]["gevonden"]["ean"]) == "8711577266042"
+    assert normalize_gtin(shops["www.hema.nl"]["gevonden"]["ean"]) == "8721245460115"
+    assert shops["www.hema.nl"]["gevonden"]["varianten"] == 13  # every variant has its own barcode
+    for host in ("www.bol.com", "www.kruidvat.nl", "www.ah.nl", "www.mediamarkt.nl"):
+        assert shops[host]["http_status"] == 403
+
+
+def test_looks_blocked_is_public_and_knows_bot_pages():
+    assert pp.looks_blocked(403, "")
+    assert pp.looks_blocked(200, "<html>Please solve the captcha</html>")
+    assert not pp.looks_blocked(200, "<html>" + "x" * 9000 + "captcha</html>")  # a big real page
+    assert not pp.looks_blocked(200, "<html>gewone pagina</html>")

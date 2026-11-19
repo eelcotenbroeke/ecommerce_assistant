@@ -10,6 +10,9 @@ from beslist_pages import EAN, PRODUCT_URL, ROWS, SEARCH_PAGE, SEARCH_URL, produ
 BOL_URL = "https://www.bol.com/nl/nl/p/kerastase-gloss-absolu/9300000012345678/"
 BOL_LINK_FROM_PHONE = BOL_URL + "?bltgh=abc123&promo=1#reviews"
 AMAZON_URL = "https://www.amazon.nl/dp/B01M635J8I"
+AMAZON_LINK_FROM_PHONE = (
+    "https://www.amazon.nl/-/en/HG-Gel-Unblocker/dp/B01M635J8I/?_encoding=UTF8&pd_rd_w=kx6Jz&ref_=pd_hp_d_atf"
+)
 NOW = datetime(2026, 11, 18, 12, 30)
 
 
@@ -19,6 +22,15 @@ def bol_page(ean=EAN, child=None):
     if child:
         html += f"<table><tr><th>Child GTIN</th><td>{child}</td></tr></table>"
     return html
+
+
+def amazon_page(gtin14="0" + EAN):
+    """The shape of an Amazon product page: a product overview row holding a GTIN-14."""
+    return (
+        "<html><head><title>HG Gel Unblocker : Amazon.nl: Huishouden</title></head><body><table><tr>"
+        '<td><span class="a-text-bold">Global Trade Identification Number</span></td>'
+        f'<td><span class="po-break-word">{gtin14}</span></td></tr></table></body></html>'
+    )
 
 
 class Net:
@@ -79,7 +91,7 @@ def test_other_input_is_not_recognised(text):
     net = Net({})
     result = net.lookup(text)
     assert result.status == lookup.INVALID_INPUT
-    assert "bol-productlink of een EAN" in result.message
+    assert "bol- of Amazon-productlink of een EAN" in result.message
     assert net.calls == []
 
 
@@ -131,12 +143,56 @@ def test_bol_page_without_clear_ean_asks_for_the_ean():
     assert "Geen eenduidige EAN" in result.message
 
 
-def test_amazon_link_is_not_fetched():
-    net = Net({})
+def test_amazon_link_gives_the_ean_then_the_chain():
+    net = Net({AMAZON_URL: (200, amazon_page()), **beslist_ok()})
+    result = net.lookup(AMAZON_LINK_FROM_PHONE)
+    assert result.status == lookup.OK
+    assert result.ean == EAN  # the GTIN-14 with its leading zero is the same barcode
+    # the locale, the query string and the tracking never go on: only the product's own page
+    assert net.calls == [AMAZON_URL, SEARCH_URL, PRODUCT_URL]
+    assert any("EAN van de Amazon-pagina" in step for step in result.steps)
+
+
+def test_amazon_link_without_scheme_and_on_another_amazon_host():
+    net = Net({"https://amazon.nl/dp/B01M635J8I": (200, amazon_page()), **beslist_ok()})
+    assert net.lookup("amazon.nl/dp/B01M635J8I").status == lookup.OK
+    net = Net({"https://www.amazon.de/dp/B01M635J8I": (200, amazon_page()), **beslist_ok()})
+    assert net.lookup("https://www.amazon.de/gp/product/B01M635J8I?th=1").status == lookup.OK
+
+
+@pytest.mark.parametrize("status", [202, 403, 429, 503])
+def test_amazon_block_is_reported_and_not_worked_around(status):
+    net = Net({AMAZON_URL: (status, "nee")})
     result = net.lookup(AMAZON_URL)
     assert result.status == lookup.NEEDS_EAN
-    assert "Global Trade Identification Number" in result.message
-    assert net.calls == []
+    assert "Amazon liet de pagina niet lezen" in result.message and "niet omzeild" in result.message
+    assert "Global Trade Identification Number" in result.message  # and says where the EAN is
+    assert net.calls == [AMAZON_URL]  # one request, no retry
+
+
+def test_amazon_bot_check_page_with_status_200_is_a_block_too():
+    page = "<html><body>Enter the characters you see below (captcha)</body></html>"
+    net = Net({AMAZON_URL: (200, page)})
+    result = net.lookup(AMAZON_URL)
+    assert result.status == lookup.NEEDS_EAN
+    assert "Amazon liet de pagina niet lezen" in result.message
+    assert net.calls == [AMAZON_URL]
+
+
+def test_amazon_other_failures_ask_for_the_ean():
+    net = Net({AMAZON_URL: (404, "weg")})
+    assert "Amazon gaf HTTP 404." in net.lookup(AMAZON_URL).message
+    net = Net({AMAZON_URL: (None, "timed out")})
+    result = net.lookup(AMAZON_URL)
+    assert result.status == lookup.NEEDS_EAN
+    assert "Geen antwoord van Amazon (timed out)" in result.message and "Plak de EAN zelf" in result.message
+
+
+def test_amazon_page_without_a_clear_ean_asks_for_the_ean():
+    net = Net({AMAZON_URL: (200, "<html>geen barcode</html>")})
+    result = net.lookup(AMAZON_URL)
+    assert result.status == lookup.NEEDS_EAN
+    assert "Geen eenduidige EAN op de Amazon-pagina" in result.message
 
 
 # ------------------------------------------------------------------ Beslist failures

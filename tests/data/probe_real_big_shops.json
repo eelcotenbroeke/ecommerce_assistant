@@ -1,0 +1,240 @@
+{
+  "_comment": "Real answers of the 'Test winkelpagina's' screen, 2026-11-19 13:40, one product per shop, from the owner's app on Streamlit Community Cloud. Tracking parameters removed from the links.",
+  "probe": [
+    {
+      "link": "https://www.bol.com/nl/nl/p/cadeaulint-krullint-lint-goud/9300000010581544/",
+      "oordeel": "blocked",
+      "melding": "De winkel liet de pagina niet lezen (HTTP 403, waarschijnlijk een bot-controle). Dit wordt niet omzeild: plak de EAN of de productnaam zelf.",
+      "http_status": 403,
+      "gevonden": {
+        "ean": null,
+        "ean_bron": null,
+        "mpn": [],
+        "sku": [],
+        "merk": null,
+        "naam": null,
+        "naam_bron": null,
+        "varianten": 0,
+        "barcode_hints": []
+      },
+      "pagina": null
+    },
+    {
+      "link": "https://www.amazon.nl/-/en/HG-Unblocker-Removes-Clogging-Toilet/dp/B0CBQ252DS/",
+      "oordeel": "readable",
+      "melding": "Pagina gelezen. Gevonden: EAN, merk, naam. Ontbreekt: MPN.",
+      "http_status": 200,
+      "gevonden": {
+        "ean": "8711577266042",
+        "ean_bron": "spec-table",
+        "mpn": [],
+        "sku": [],
+        "merk": "HG",
+        "naam": "HG Gel Unblocker | Removes Clogging in Sink & Toilet | 1L : Amazon.nl: Health & Personal Care",
+        "naam_bron": "title",
+        "varianten": 0,
+        "barcode_hints": []
+      },
+      "pagina": {
+        "url": "https://www.amazon.nl/-/en/HG-Unblocker-Removes-Clogging-Toilet/dp/B0CBQ252DS/",
+        "status": 200,
+        "bytes": 1149860,
+        "title": "HG Gel Unblocker | Removes Clogging in Sink & Toilet | 1L : Amazon.nl: Health & Personal Care",
+        "meta": {},
+        "json_ld_products": [],
+        "spec_pairs": [
+          [
+            "Brand",
+            "HG"
+          ]
+        ],
+        "barcode_hints": []
+      }
+    },
+    {
+      "link": "https://www.kruidvat.nl/weleda-baby-calendula-shampoo-bodywash/p/6374681",
+      "oordeel": "blocked",
+      "melding": "De winkel liet de pagina niet lezen (HTTP 403, waarschijnlijk een bot-controle). Dit wordt niet omzeild: plak de EAN of de productnaam zelf.",
+      "http_status": 403,
+      "gevonden": {
+        "ean": null,
+        "ean_bron": null,
+        "mpn": [],
+        "sku": [],
+        "merk": null,
+        "naam": null,
+        "naam_bron": null,
+        "varianten": 0,
+        "barcode_hints": []
+      },
+      "pagina": null
+    },
+    {
+      "link": "https://www.etos.nl/producten/nivea-double-effect-waterproof-oogmake-up-remover-125-ml-120063938.html",
+      "oordeel": "no_answer",
+      "melding": "Geen antwoord van de winkel: The read operation timed out",
+      "http_status": null,
+      "gevonden": {
+        "ean": null,
+        "ean_bron": null,
+        "mpn": [],
+        "sku": [],
+        "merk": null,
+        "naam": null,
+        "naam_bron": null,
+        "varianten": 0,
+        "barcode_hints": []
+      },
+      "pagina": null
+    },
+    {
+      "link": "https://www.ah.nl/producten/product/wi581554/riporta-primitivo-limited-edition",
+      "oordeel": "blocked",
+      "melding": "De winkel liet de pagina niet lezen (HTTP 403, waarschijnlijk een bot-controle). Dit wordt niet omzeild: plak de EAN of de productnaam zelf.",
+      "http_status": 403,
+      "gevonden": {
+        "ean": null,
+        "ean_bron": null,
+        "mpn": [],
+        "sku": [],
+        "merk": null,
+        "naam": null,
+        "naam_bron": null,
+        "varianten": 0,
+        "barcode_hints": []
+      },
+      "pagina": null
+    },
+    {
+      "link": "https://www.jumbo.com/producten/crystal-clear-cranberry-smaak-drank-1l-751348FLS",
+      "oordeel": "no_answer",
+      "melding": "Geen antwoord van de winkel: The read operation timed out",
+      "http_status": null,
+      "gevonden": {
+        "ean": null,
+        "ean_bron": null,
+        "mpn": [],
+        "sku": [],
+        "merk": null,
+        "naam": null,
+        "naam_bron": null,
+        "varianten": 0,
+        "barcode_hints": []
+      },
+      "pagina": null
+    },
+    {
+      "link": "https://www.mediamarkt.nl/nl/product/_apple-iphone-18-pro-max-5g-256-gb-burgundy-1914065.html",
+      "oordeel": "blocked",
+      "melding": "De winkel liet de pagina niet lezen (HTTP 403, waarschijnlijk een bot-controle). Dit wordt niet omzeild: plak de EAN of de productnaam zelf.",
+      "http_status": 403,
+      "gevonden": {
+        "ean": null,
+        "ean_bron": null,
+        "mpn": [],
+        "sku": [],
+        "merk": null,
+        "naam": null,
+        "naam_bron": null,
+        "varianten": 0,
+        "barcode_hints": []
+      },
+      "pagina": null
+    },
+    {
+      "link": "https://www.hema.nl/dames/dameskleding/vesten/damesvest-ruiten-36215081.html",
+      "oordeel": "readable",
+      "melding": "Pagina gelezen. Gevonden: EAN, merk, naam. Ontbreekt: MPN.",
+      "http_status": 200,
+      "gevonden": {
+        "ean": "8721245460115",
+        "ean_bron": "json-ld",
+        "mpn": [],
+        "sku": [
+          "36215081"
+        ],
+        "merk": "HEMA",
+        "naam": "damesvest ruiten",
+        "naam_bron": "json-ld",
+        "varianten": 13,
+        "barcode_hints": [
+          [
+            "8721245460115",
+            "n aantrekt.\",\"sku\":\"36215081\",\"gtin13\":\"8721245460115\",\"image\":[\""
+          ]
+        ]
+      },
+      "pagina": {
+        "url": "https://www.hema.nl/dames/dameskleding/vesten/damesvest-ruiten-36215081.html",
+        "status": 200,
+        "bytes": 698828,
+        "title": "damesvest ruiten - HEMA",
+        "meta": {},
+        "json_ld_products": [
+          {
+            "@type": "ProductGroup",
+            "name": "damesvest ruiten",
+            "brand": {
+              "@type": "Organization",
+              "name": "HEMA"
+            },
+            "hasVariant": "12 varianten"
+          },
+          {
+            "@type": "Product",
+            "name": "damesvest ruiten",
+            "sku": "36215081",
+            "color": "bruin",
+            "url": "https://www.hema.nl/dames/dameskleding/vesten/damesvest-ruiten-36215081.html",
+            "gtin13": "8721245460115",
+            "offers": {
+              "price": 44.99,
+              "priceCurrency": "EUR",
+              "availability": "https://schema.org/InStoreOnly"
+            }
+          },
+          {
+            "@type": "Product",
+            "color": "bruin",
+            "url": "https://www.hema.nl/dames/dameskleding/vesten/36215082.html",
+            "offers": {
+              "availability": "https://schema.org/OutOfStock"
+            }
+          },
+          {
+            "@type": "Product",
+            "color": "bruin",
+            "url": "https://www.hema.nl/dames/dameskleding/vesten/36215083.html",
+            "offers": {
+              "availability": "https://schema.org/OutOfStock"
+            }
+          },
+          {
+            "@type": "Product",
+            "color": "bruin",
+            "url": "https://www.hema.nl/dames/dameskleding/vesten/36215084.html",
+            "offers": {
+              "availability": "https://schema.org/OutOfStock"
+            }
+          }
+        ],
+        "spec_pairs": [
+          [
+            "artikelnummer",
+            "36215081"
+          ],
+          [
+            "stijl",
+            "casual"
+          ]
+        ],
+        "barcode_hints": [
+          [
+            "8721245460115",
+            "n aantrekt.\",\"sku\":\"36215081\",\"gtin13\":\"8721245460115\",\"image\":[\""
+          ]
+        ]
+      }
+    }
+  ]
+}
