@@ -5,7 +5,9 @@ tested with fake fetches. Steps, as seen by the owner:
 
 1. A barcode is used as is. A bol or Amazon product link is fetched (without its tracking
    parameters) to read its EAN; when the shop refuses (a block is never worked around) the owner
-   is asked for the EAN instead.
+   is asked for the EAN instead. An Amazon page that is readable but shows no EAN gives its title
+   as a product name instead: the offers source then searches on that name (`source(None, steps,
+   name=...)`).
 2. An *offers source* turns the EAN into a list of offers. Two exist: Beslist (`beslist_source`,
    pages fetched with `fetch`) and Google Shopping through SerpApi (`serp.serp_source`). A source
    returns `Found`, `Failure` or `Choose`: Google Shopping cannot match a barcode exactly, so it
@@ -20,7 +22,7 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Callable
 from datetime import datetime
 from urllib.parse import urlparse
@@ -28,7 +30,7 @@ from urllib.parse import urlparse
 from beslist import Offer, find_product_url, parse_offers, product_ean, search_url
 from choice import TOLERANCE, Recommendation, recommend
 from ean import extract_ids, normalize_gtin, parse_product_url
-from pageprobe import looks_blocked
+from pageprobe import looks_blocked, read_page
 
 PAUSE_SECONDS = 2.0  # between the two requests to Beslist
 SAMPLE_EAN = "3474637283414"  # a product known to be on Beslist, for connection tests
@@ -136,9 +138,19 @@ def _bol_page_url(text):
 
 
 _AMAZON_EAN_HELP = (
-    "Plak de EAN zelf: die staat op de Amazon-pagina onder Productinformatie bij "
-    "'Global Trade Identification Number'."
+    "Plak de EAN zelf (als Amazon die toont, staat hij onder Productinformatie bij "
+    "'Global Trade Identification Number')."
 )
+NO_EAN_ON_AMAZON = (
+    "Amazon toont bij dit product geen EAN. Plak de EAN zelf als je die weet, of vul bij "
+    "\u201cProductnaam\u201d de naam van het product in."
+)
+NAME_FROM_AMAZON_NOTE = (
+    "Amazon toont bij dit product geen EAN: er is gezocht op de productnaam in plaats van op de EAN. "
+    "Controleer of het gevonden product klopt."
+)
+MAX_PAGE_NAME_CHARS = 120
+_UNUSABLE_NAME_RE = re.compile(r"^(amazon\b|sorry\b|oeps\b|page not found|pagina niet gevonden)", re.IGNORECASE)
 
 
 def _amazon_page_url(text, ref):
@@ -147,7 +159,29 @@ def _amazon_page_url(text, ref):
     return f"https://{urlparse(text).hostname}/dp/{ref.product_id}"
 
 
+def _name_from_amazon_page(url, html):
+    """The product name for a search, from the page's own title; None when it says too little.
+
+    Amazon titles often continue after " | " with a string of features: only the first part is
+    kept, cut at a word to at most MAX_PAGE_NAME_CHARS.
+    """
+    name = read_page(url, 200, html).name or ""
+    name = " ".join(name.split(" | ")[0].split())
+    if name.endswith("\u2026"):  # read_page already cut a very long title: drop the half word
+        name = name[:-1].rsplit(" ", 1)[0]
+    if len(name) > MAX_PAGE_NAME_CHARS:
+        name = name[:MAX_PAGE_NAME_CHARS].rsplit(" ", 1)[0]
+    if len(name.split()) < 2 or _UNUSABLE_NAME_RE.match(name):
+        return None
+    return name
+
+
 def _ean_from_amazon(text, ref, fetch, steps, stop):
+    """(ean, child_gtins, early_result, page_name) like `_ean_from_input`.
+
+    A readable page without an EAN is not a failure here: it returns no EAN and, when the title
+    is usable, the product name; `lookup` then asks the offers source to search on that name.
+    """
     url = _amazon_page_url(text, ref)
     status, html = fetch(url)
     steps.append(_describe("Amazon-pagina", status, html))
@@ -161,24 +195,32 @@ def _ean_from_amazon(text, ref, fetch, steps, stop):
         return stop(NEEDS_EAN, f"{_failure('Amazon', status, html)} {_AMAZON_EAN_HELP}")
     ids = extract_ids(html)
     if not ids.ean:
-        return stop(NEEDS_EAN, f"Geen eenduidige EAN op de Amazon-pagina gevonden. {_AMAZON_EAN_HELP}")
+        name = _name_from_amazon_page(url, html)
+        steps.append(
+            "Geen EAN op de Amazon-pagina" + (f"; productnaam van de pagina: {name}" if name else "; ook geen bruikbare titel")
+        )
+        return None, (), None, name
     steps.append(f"EAN van de Amazon-pagina: {ids.ean}")
-    return ids.ean, ids.child_gtins, None
+    return ids.ean, ids.child_gtins, None, None
 
 
 def _ean_from_input(text, fetch, steps):
-    """(ean, child_gtins, early_result): early_result is set when there is no EAN to continue with."""
+    """(ean, child_gtins, early_result, page_name).
+
+    early_result is set when there is nothing to continue with. ean is None, with no early_result,
+    when the page was read but shows no EAN: page_name is then the product name from the page (or None).
+    """
     cleaned = (text or "").strip()
 
     def stop(status, message):
-        return None, (), LookupResult(status, message, steps=tuple(steps))
+        return None, (), LookupResult(status, message, steps=tuple(steps)), None
 
     if not cleaned:
         return stop(INVALID_INPUT, "Plak een bol- of Amazon-productlink of een EAN.")
     if re.fullmatch(r"[\d\s\-]+", cleaned):
         gtin = normalize_gtin(cleaned)
         if gtin:
-            return gtin, (), None
+            return gtin, (), None, None
         return stop(INVALID_INPUT, "Dit is geen geldige EAN (lengte of controlecijfer klopt niet).")
 
     ref = parse_product_url(cleaned)
@@ -205,7 +247,7 @@ def _ean_from_input(text, fetch, steps):
             "Geen eenduidige EAN op de bolpagina gevonden. Plak de EAN zelf.",
         )
     steps.append(f"EAN van de bolpagina: {ids.ean}")
-    return ids.ean, ids.child_gtins, None
+    return ids.ean, ids.child_gtins, None, None
 
 
 def _beslist_failure(status, text):
@@ -220,7 +262,9 @@ def _beslist_failure(status, text):
 def beslist_source(fetch, sleep=time.sleep, now=datetime.now):
     """Offers source: Beslist search page -> product page for exactly this EAN -> offers."""
 
-    def source(ean, steps):
+    def source(ean, steps, page_name=None):
+        if ean is None:  # Beslist is asked for a barcode, not for a name
+            return Failure(NEEDS_EAN, NO_EAN_ON_AMAZON)
         name = "Beslist"
         status, html = fetch(search_url(ean))
         steps.append(_describe("Beslist zoekpagina", status, html))
@@ -262,18 +306,23 @@ def beslist_source(fetch, sleep=time.sleep, now=datetime.now):
 
 
 def lookup(text, fetch, sleep=time.sleep, now=datetime.now, tolerance=TOLERANCE, source=None):
-    """Run the chain for a bol link or a barcode. Always returns a LookupResult.
+    """Run the chain for a bol link, an Amazon link or a barcode. Always returns a LookupResult.
 
-    `fetch` reads the bol page (and the Beslist pages when no other `source` is given). A
-    `source(ean, steps)` function returns `Found`, `Failure` or `Choose`; it defaults to Beslist.
+    `fetch` reads the bol or Amazon page (and the Beslist pages when no other `source` is given).
+    A `source(ean, steps)` function returns `Found`, `Failure` or `Choose`; it defaults to Beslist.
+    When an Amazon page has no EAN the source is called as `source(None, steps, page_name=name)`
+    (name: the page's own title, or None): a source that can search on a name does so, the others
+    ask for the EAN.
     """
     steps = []
-    ean, child_gtins, early = _ean_from_input(text, fetch, steps)
+    ean, child_gtins, early, page_name = _ean_from_input(text, fetch, steps)
     if early is not None:
         return early
     source = source or beslist_source(fetch, sleep, now)
 
-    found = source(ean, steps)
+    found = source(ean, steps) if ean else source(None, steps, page_name=page_name)
+    if not ean and isinstance(found, (Found, Choose)):
+        found = replace(found, notes=(NAME_FROM_AMAZON_NOTE, *found.notes))
     if isinstance(found, Failure):
         return _result(
             steps, ean, child_gtins, found.status, found.message,
