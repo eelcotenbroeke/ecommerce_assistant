@@ -184,7 +184,7 @@ def test_block_is_shown_as_an_error_without_a_table(network):
 
 def test_invalid_input_is_a_warning(network):
     at = start()
-    at.text_input(key="ean_text").set_value("shampoo")
+    at.text_input(key="ean_text").set_value("https://www.kruidvat.nl/p/shampoo/123")  # a shop that is not known
     go_button(at).click().run()
     assert "bol- of Amazon-productlink of een EAN" in texts(at.warning)
     assert network.calls == []
@@ -769,7 +769,7 @@ def test_the_switch_keeps_its_value_for_the_next_search(network):
     at = start(KEY)
     search(at)
     show_all(at)
-    search(at, "abc")  # a warning without offers: no switch on the screen for a moment
+    search(at, "https://www.kruidvat.nl/p/shampoo/123")  # a warning without offers: no switch on the screen for a moment
     assert not at.toggle
     search(at)  # the same EAN again, from the session's memory
     assert at.toggle(key="ean_members_only").value is False
@@ -811,3 +811,74 @@ def test_when_no_member_has_an_offer_the_screen_says_so_and_the_switch_shows_the
     show_all(at)
     assert "Celini.nl" in listed_shops(at)
     assert "Celini.nl: \u20ac 33,95" in texts(at.success)
+
+
+# ------------------------------------------------------------------ a name alone is enough
+
+
+def test_a_product_name_alone_is_searched_without_a_link_or_an_ean(network):
+    at = start(KEY)
+    at.text_input(key="ean_hint").set_value("Kérastase Gloss Absolu shampoo")
+    go_button(at).click().run()
+    assert not at.exception
+    assert serp_queries(network) == ["Kérastase Gloss Absolu shampoo"]
+    assert network.calls.count(SEARCH_URL) == 0  # no Beslist
+    caption = texts(at.caption)
+    assert "Zoekterm bij Google: Kérastase Gloss Absolu shampoo" in caption and "Gezocht op EAN" not in caption
+    assert "Amazon toont bij dit product geen EAN" not in everything_on_screen(at)
+    show_all(at)
+    assert "Celini.nl" in listed_shops(at)
+
+
+def test_words_in_the_link_field_are_a_name_too(network):
+    at = start(KEY)
+    search(at, "Kérastase Gloss Absolu shampoo")
+    assert not at.exception
+    assert serp_queries(network) == ["Kérastase Gloss Absolu shampoo"]
+    assert not at.error and not at.warning
+
+
+def test_a_name_alone_without_a_key_says_google_is_needed_and_requests_nothing(network):
+    at = start()
+    at.text_input(key="ean_hint").set_value("Kérastase Gloss Absolu shampoo")
+    go_button(at).click().run()
+    assert "SERPAPI_KEY" in texts(at.warning) and "productnaam" in texts(at.warning)
+    assert network.calls == []
+
+
+def test_the_candidate_list_for_a_name_does_not_talk_about_an_ean(network):
+    network.serp_answers["google_shopping"] = (
+        200,
+        json.dumps({"shopping_results": [
+            item("A.nl", 38.0, product_id="111", title="Kérastase Gloss Absolu shampoo 250 ml"),
+            item("B.nl", 15.0, product_id="222", title="Kérastase Gloss Absolu masque 200 ml"),
+        ]}),
+    )
+    at = start(KEY)
+    search(at, "Kérastase Gloss")
+    assert not at.exception
+    intro = texts(at.info)
+    assert "je zoekterm" in intro and "EAN" not in intro
+
+
+def test_a_link_in_the_link_field_is_still_a_link_when_the_name_is_filled_in(network):
+    at = start(KEY)
+    at.text_input(key="ean_hint").set_value("Kérastase Gloss Absolu shampoo")
+    search(at, EAN)
+    assert f"Gezocht op EAN {EAN}" in texts(at.caption)
+
+
+def test_an_empty_form_asks_for_a_link_an_ean_or_a_name(network):
+    at = start(KEY)
+    search(at, "")
+    assert "productnaam" in texts(at.warning) + texts(at.error) + texts(at.info)
+    assert serp_calls(network) == []
+
+
+def test_a_session_of_twenty_five_products_stays_in_the_raw_answers_download(network):
+    at = start(KEY)
+    for number in range(25):
+        search(at, f"Merk Product {number} shampoo")
+    assert not at.exception
+    log = at.session_state["serp_log"]
+    assert len(log) == 50 and ean_page.LOG_LIMIT >= 50

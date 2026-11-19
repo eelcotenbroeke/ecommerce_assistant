@@ -535,3 +535,54 @@ def test_the_budget_guard_still_counts_both_steps_for_a_search_on_the_page_name(
     asked = []
     result = run_amazon(fake, guard=lambda cost: asked.append(cost))
     assert asked == [2] and result.status == lookup.OK
+
+
+# ------------------------------------------------------------------ no link, no EAN: only a name
+
+
+def run_by_name(fake, name=PAGE_NAME, **kwargs):
+    source = serp.serp_source(fake, now=lambda: "NOW", hint=name, **kwargs)
+    return lookup.lookup("", None, source=source, by_name=True)  # fetch is None: no page is read
+
+
+def test_a_name_alone_is_what_google_is_asked_for():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[])
+    result = run_by_name(fake)
+    assert fake.calls[0]["q"] == PAGE_NAME
+    assert result.status == lookup.OK and result.ean is None and result.query == PAGE_NAME
+    assert lookup.NAME_FROM_AMAZON_NOTE not in result.notes
+
+
+def test_a_name_alone_that_matches_one_product_is_picked_at_once():
+    fake = FakeSerp(
+        shopping=[
+            item("C.nl", 15.0, product_id="222", title=OTHER, token="other"),
+            item("A.nl", 38.0, product_id="111"),
+        ],
+        stores=[],
+    )
+    result = run_by_name(fake, name=TITLE)
+    assert result.status == lookup.OK and result.product_title == TITLE
+    assert "Product gekozen op je productnaam" in result.steps
+
+
+def test_a_vague_name_alone_gives_a_list_to_choose_from_and_the_choice_keeps_the_query():
+    fake = two_products()
+    result = run_by_name(fake, name="Kérastase Gloss")
+    assert result.status == lookup.CHOOSE and result.ean is None and result.query == "Kérastase Gloss"
+    assert result.notes == ()
+    chosen = lookup.finish_choice(result, result.candidates[1])
+    assert chosen.status == lookup.OK and chosen.query == "Kérastase Gloss"
+
+
+def test_nothing_found_for_a_name_alone_asks_for_another_name():
+    fake = FakeSerp(shopping_error="Google hasn't returned any results for this query.")
+    result = run_by_name(fake, name="onzinproduct")
+    assert result.status == lookup.NOT_FOUND and "“onzinproduct”" in result.message
+
+
+def test_the_budget_guard_counts_both_steps_for_a_name_alone():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[])
+    asked = []
+    result = run_by_name(fake, guard=lambda cost: asked.append(cost))
+    assert asked == [2] and result.status == lookup.OK

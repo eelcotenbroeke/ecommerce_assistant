@@ -271,6 +271,72 @@ def test_a_blocked_amazon_page_never_gives_a_name():
     assert result.status == lookup.NEEDS_EAN and source.calls == []
 
 
+# ------------------------------------------------------------------ a product name instead of a link
+
+
+def test_a_name_in_the_link_field_or_in_the_name_field_is_a_name():
+    assert lookup.name_from_input("", "Kérastase Gloss Absolu") == "Kérastase Gloss Absolu"
+    assert lookup.name_from_input("   ", " Nutella ") == "Nutella"
+    assert lookup.name_from_input("Kérastase Gloss Absolu shampoo", "") == "Kérastase Gloss Absolu shampoo"
+    # the owner's *Productnaam* wins when both are filled in
+    assert lookup.name_from_input("Kérastase", "Kérastase Gloss Absolu") == "Kérastase Gloss Absolu"
+    assert lookup.name_from_input("Nutella") == "Nutella"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        EAN,
+        "3474-6372 83414",
+        BOL_URL,
+        AMAZON_URL,
+        "https://www.kruidvat.nl/p/shampoo/123",  # a shop that is not known yet: still a link
+        "www.kruidvat.nl",
+        "kruidvat.nl/p/shampoo/123",
+        "Kijk eens https://www.kruidvat.nl/p/1",
+    ],
+)
+def test_links_and_barcodes_are_never_taken_for_a_name(text):
+    assert lookup.name_from_input(text, "Kérastase") is None
+    assert lookup.name_from_input(text, "") is None
+
+
+def test_nothing_at_all_is_no_name():
+    assert lookup.name_from_input("", "") is None
+    assert lookup.name_from_input(None, None) is None
+    net = Net({})
+    result = net.lookup("")
+    assert result.status == lookup.INVALID_INPUT and "productnaam" in result.message
+
+
+def test_by_name_calls_the_source_without_an_ean_or_a_page_and_reads_no_page():
+    net = Net({})
+    source = NameSource()
+    result = net.lookup("", source=source, by_name=True)
+    assert source.calls == [(None, None)]
+    assert result.status == lookup.OK and result.ean is None
+    assert lookup.NAME_FROM_AMAZON_NOTE not in result.notes  # that note is about an Amazon page
+    assert net.calls == []
+
+
+def test_a_name_search_through_a_choice_has_no_amazon_note_either():
+    net = Net({})
+
+    def source(ean, steps, page_name=None):
+        return lookup.Choose(("a", "b"), "Bron", lambda c, s: None, notes=("let op",))
+
+    result = net.lookup("", source=source, by_name=True)
+    assert result.status == lookup.CHOOSE and result.ean is None and result.notes == ("let op",)
+
+
+def test_beslist_cannot_search_on_a_name_and_nothing_is_requested():
+    net = Net({})
+    result = net.lookup("", by_name=True)
+    assert result.status == lookup.NEEDS_EAN and result.message == lookup.NAME_NEEDS_GOOGLE
+    assert "SERPAPI_KEY" in result.message
+    assert net.calls == [] and net.sleeps == []
+
+
 # ------------------------------------------------------------------ Beslist failures
 
 

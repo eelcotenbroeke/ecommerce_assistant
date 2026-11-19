@@ -149,6 +149,11 @@ NAME_FROM_AMAZON_NOTE = (
     "Amazon toont bij dit product geen EAN: er is gezocht op de productnaam in plaats van op de EAN. "
     "Controleer of het gevonden product klopt."
 )
+
+NAME_NEEDS_GOOGLE = (
+    "Zoeken op productnaam kan alleen via Google Shopping (SerpApi): zet SERPAPI_KEY onder "
+    "Settings \u2192 Secrets. Of plak een bol-link, een Amazon-link of een EAN."
+)
 MAX_PAGE_NAME_CHARS = 120
 _UNUSABLE_NAME_RE = re.compile(r"^(amazon\b|sorry\b|oeps\b|page not found|pagina niet gevonden)", re.IGNORECASE)
 
@@ -204,6 +209,24 @@ def _ean_from_amazon(text, ref, fetch, steps, stop):
     return ids.ean, ids.child_gtins, None, None
 
 
+def name_from_input(text, hint=None):
+    """The product name to search on, when the owner gave a name instead of a link or an EAN.
+
+    Nothing in the link field, or words in it (no link, no barcode), means a search on a name:
+    the *Productnaam* field wins when it is filled in, else the words typed in the link field.
+    A link or a barcode in the link field is never taken for a name: returns None.
+    """
+    cleaned = (text or "").strip()
+    name = (hint or "").strip()
+    if not cleaned:
+        return name or None
+    if re.fullmatch(r"[\d\s\-]+", cleaned) or "://" in cleaned or parse_product_url(cleaned):
+        return None
+    if not re.search(r"\s", cleaned) and re.search(r"[./]", cleaned):
+        return None  # "kruidvat.nl/p/..." or "www.shop.nl": a link, even when the shop is not known
+    return name or cleaned
+
+
 def _ean_from_input(text, fetch, steps):
     """(ean, child_gtins, early_result, page_name).
 
@@ -216,7 +239,7 @@ def _ean_from_input(text, fetch, steps):
         return None, (), LookupResult(status, message, steps=tuple(steps)), None
 
     if not cleaned:
-        return stop(INVALID_INPUT, "Plak een bol- of Amazon-productlink of een EAN.")
+        return stop(INVALID_INPUT, "Plak een bol- of Amazon-productlink of een EAN, of vul een productnaam in.")
     if re.fullmatch(r"[\d\s\-]+", cleaned):
         gtin = normalize_gtin(cleaned)
         if gtin:
@@ -305,7 +328,7 @@ def beslist_source(fetch, sleep=time.sleep, now=datetime.now):
     return source
 
 
-def lookup(text, fetch, sleep=time.sleep, now=datetime.now, tolerance=TOLERANCE, source=None):
+def lookup(text, fetch, sleep=time.sleep, now=datetime.now, tolerance=TOLERANCE, source=None, by_name=False):
     """Run the chain for a bol link, an Amazon link or a barcode. Always returns a LookupResult.
 
     `fetch` reads the bol or Amazon page (and the Beslist pages when no other `source` is given).
@@ -313,15 +336,23 @@ def lookup(text, fetch, sleep=time.sleep, now=datetime.now, tolerance=TOLERANCE,
     When an Amazon page has no EAN the source is called as `source(None, steps, page_name=name)`
     (name: the page's own title, or None): a source that can search on a name does so, the others
     ask for the EAN.
+
+    With `by_name` there is no link or EAN: the owner gave a product name and the source (which
+    holds that name) searches on it. Only a source that can do that works: Beslist cannot.
     """
     steps = []
-    ean, child_gtins, early, page_name = _ean_from_input(text, fetch, steps)
+    if by_name:
+        if source is None:
+            return LookupResult(NEEDS_EAN, NAME_NEEDS_GOOGLE, steps=tuple(steps))
+        ean, child_gtins, early, page_name = None, (), None, None
+    else:
+        ean, child_gtins, early, page_name = _ean_from_input(text, fetch, steps)
     if early is not None:
         return early
     source = source or beslist_source(fetch, sleep, now)
 
     found = source(ean, steps) if ean else source(None, steps, page_name=page_name)
-    if not ean and isinstance(found, (Found, Choose)):
+    if not ean and not by_name and isinstance(found, (Found, Choose)):
         found = replace(found, notes=(NAME_FROM_AMAZON_NOTE, *found.notes))
     if isinstance(found, Failure):
         return _result(
