@@ -443,3 +443,128 @@ def test_a_new_input_replaces_the_old_result(network):
     assert f"Gezocht op EAN {EAN}" not in texts(at.caption)
     assert "Product volgens Google Shopping: **Heel ander product**" in texts(at.markdown)
     assert len(serp_calls(network)) == 4  # two lookups of two searches each
+
+
+# ------------------------------------------------------------------ several products: the owner picks
+
+OTHER_TITLE = "Kérastase Gloss Absolu Masque 200 ml"
+
+
+def several_products(network):
+    """Google answers with two different products, like it does for most real EANs."""
+    network.serp_answers["google_shopping"] = (
+        200,
+        json.dumps(
+            {
+                "shopping_results": [
+                    item("Cosmetica.nl", 15.0, product_id="222", title=OTHER_TITLE, token="other",
+                         thumbnail="https://encrypted-tbn0.gstatic.com/images?q=1"),
+                    item("Celini.nl", 35.28),
+                    item("Flaconi.nl", 38.63, link="https://www.flaconi.nl/kerastase-gloss"),
+                ]
+            }
+        ),
+    )
+
+
+def pick_buttons(at):
+    return sorted(b.key for b in at.button if b.key and b.key.startswith("ean_pick_"))
+
+
+def test_several_products_are_listed_after_one_search(network):
+    several_products(network)
+    at = start(KEY)
+    search(at)
+    assert not at.exception
+    assert len(serp_calls(network)) == 1
+    assert "Tik op het product" in texts(at.info)
+    assert pick_buttons(at) == ["ean_pick_0", "ean_pick_1"]
+    markdown = texts(at.markdown)
+    assert f"**{OTHER_TITLE}**" in markdown and f"**{TITLE}**" in markdown
+    captions = texts(at.caption)
+    assert "1 winkel · € 15,00" in captions
+    assert "2 winkels · € 35,28 – € 38,63" in captions
+    assert listed_shops(at) == []  # no offers yet
+    assert not at.success
+    assert "SerpApi deze maand: 13 van 100 gebruikt" in captions  # one search so far
+
+
+def test_tapping_a_product_fetches_its_shops_for_one_more_search(network):
+    several_products(network)
+    at = start(KEY)
+    search(at)
+    at.button(key="ean_pick_1").click().run()
+    assert not at.exception
+    assert len(serp_calls(network)) == 2
+    assert "Celini.nl" in listed_shops(at) and "bol.com" in listed_shops(at)
+    assert f"Product volgens Google Shopping: **{TITLE}**" in texts(at.markdown)
+    assert "controleer of de titel" not in texts(at.info)  # he chose it himself
+    assert "SerpApi deze maand: 14 van 100 gebruikt" in texts(at.caption)
+    assert pick_buttons(at) == []
+
+
+def test_another_product_goes_back_to_the_list_without_searching(network):
+    several_products(network)
+    at = start(KEY)
+    search(at)
+    at.button(key="ean_pick_1").click().run()
+    at.button(key="ean_back").click().run()
+    assert len(serp_calls(network)) == 2
+    assert pick_buttons(at) == ["ean_pick_0", "ean_pick_1"]
+    assert listed_shops(at) == []
+    at.button(key="ean_pick_1").click().run()  # the same product again: from the session's memory
+    assert len(serp_calls(network)) == 2
+    assert "Celini.nl" in listed_shops(at)
+    at.button(key="ean_back").click().run()
+    at.button(key="ean_pick_0").click().run()  # a different product costs one more search
+    assert len(serp_calls(network)) == 3
+    assert f"Product volgens Google Shopping: **{OTHER_TITLE}**" in texts(at.markdown)
+
+
+def test_the_same_list_is_remembered_for_fifteen_minutes(network):
+    several_products(network)
+    at = start(KEY)
+    search(at)
+    search(at)
+    assert len(serp_calls(network)) == 1
+    assert pick_buttons(at) == ["ean_pick_0", "ean_pick_1"]
+
+
+def test_a_product_name_settles_the_choice_without_a_list(network):
+    several_products(network)
+    at = start(KEY)
+    at.text_input(key="ean_hint").set_value("kerastase gloss absolu bain hydra-glaze shampoo")
+    search(at)
+    assert len(serp_calls(network)) == 2
+    assert pick_buttons(at) == []
+    assert "Celini.nl" in listed_shops(at)
+
+
+def test_a_different_product_name_is_a_different_lookup(network):
+    several_products(network)
+    at = start(KEY)
+    search(at)
+    at.text_input(key="ean_hint").set_value("masque")
+    search(at)
+    assert len(serp_calls(network)) == 3  # the first list is not reused for another name
+    assert f"Product volgens Google Shopping: **{OTHER_TITLE}**" in texts(at.markdown)
+
+
+def test_the_budget_is_checked_again_before_the_second_step(network):
+    several_products(network)
+    at = start(KEY)
+    search(at)
+    network.account["before"] = 500
+    at.button(key="ean_pick_1").click().run()
+    assert not at.exception
+    assert "Maandbudget bereikt" in texts(at.error)
+    assert len(serp_calls(network)) == 1
+    assert listed_shops(at) == []
+
+
+def test_the_connection_test_accepts_a_list_of_products(network):
+    several_products(network)
+    at = start(KEY)
+    at.button(key="ean_conn_test").click().run()
+    assert "SerpApi werkt" in texts(at.success)
+    assert len(serp_calls(network)) == 1

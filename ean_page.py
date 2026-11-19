@@ -61,10 +61,10 @@ def _refresh_account():
     return account
 
 
-def _guard():
+def _guard(cost):
     """Reason not to search (budget used up), or None. Unknown usage does not block."""
     account = _refresh_account()
-    return budget.check(account, _limit()) if account else None
+    return budget.check(account, _limit(), cost=cost) if account else None
 
 
 def _record(params, data, error):
@@ -81,35 +81,81 @@ def _record(params, data, error):
     del log[:-LOG_LIMIT]
 
 
-def _lookup(text):
+def _lookup(text, hint=""):
     key = _api_key()
     source = None
     if key:
         fetch_json = fetching.serp_fetcher(key, recorder=_record)
-        source = serp.serp_source(fetch_json, now=_now, guard=_guard)
+        source = serp.serp_source(fetch_json, now=_now, guard=_guard, hint=hint or None)
     result = lookup.lookup(text, fetching.fetch_url, sleep=time.sleep, now=_now, source=source)
     if key:
         _refresh_account()  # the usage on the screen includes this lookup
     return result
 
 
-def _run(text, fresh=False):
-    text = text.strip()
+def _cached(key):
+    entry = st.session_state.setdefault("ean_cache", {}).get(key)
+    if entry and time.time() - entry[0] < CACHE_SECONDS:
+        return entry
+    return None
+
+
+def _remember(key, result):
     cache = st.session_state.setdefault("ean_cache", {})
-    entry = cache.get(text)
-    st.session_state["ean_last"] = text
-    if entry and not fresh and time.time() - entry[0] < CACHE_SECONDS:
-        st.session_state["ean_result"] = entry[1]
-        st.session_state["ean_cached_at"] = entry[0]
-        return
-    with st.spinner("Aanbiedingen ophalen..."):
-        result = _lookup(text)
-    st.session_state["ean_result"] = result
-    st.session_state["ean_cached_at"] = None
-    if result.worked:
-        cache[text] = (time.time(), result)
+    if result.worked or result.status == lookup.CHOOSE:
+        cache[key] = (time.time(), result)
     else:
-        cache.pop(text, None)
+        cache.pop(key, None)
+
+
+def _set_result(result, cached_at=None):
+    st.session_state["ean_result"] = result
+    st.session_state["ean_cached_at"] = cached_at
+    if result.status == lookup.CHOOSE:
+        st.session_state["ean_choose_result"] = result
+
+
+def _run(text, hint="", fresh=False):
+    text, hint = text.strip(), hint.strip()
+    key = f"{text}\n{hint}"
+    st.session_state["ean_last"] = (text, hint)
+    st.session_state.pop("ean_choose_result", None)
+    entry = None if fresh else _cached(key)
+    if entry:
+        _set_result(entry[1], entry[0])
+        return
+    with st.spinner("Producten zoeken..."):
+        result = _lookup(text, hint)
+    _set_result(result)
+    _remember(key, result)
+
+
+def _choose(index):
+    """The owner tapped candidate `index` of the pending CHOOSE result: fetch its shops."""
+    pending = st.session_state.get("ean_choose_result")
+    if pending is None or not 0 <= index < len(pending.candidates):
+        return
+    candidate = pending.candidates[index]
+    key = f"{pending.ean}\n{candidate.key}"
+    entry = _cached(key)
+    if entry:
+        _set_result(entry[1], entry[0])
+        return
+    with st.spinner("Winkels ophalen..."):
+        result = lookup.finish_choice(pending, candidate)
+        if _api_key():
+            _refresh_account()
+    _set_result(result)
+    _remember(key, result)
+
+
+def _ask_pick(index):
+    st.session_state["ean_pick"] = index
+
+
+def _back_to_choice():
+    st.session_state["ean_result"] = st.session_state.get("ean_choose_result")
+    st.session_state["ean_cached_at"] = None
 
 
 def _ask_fresh():
@@ -131,7 +177,28 @@ def _offer_block(card):
             st.caption("Geen directe link: gebruik de knop met het product hieronder.")
 
 
+def _show_candidates(result):
+    st.info(lookup_view.CHOOSE_INTRO)
+    for index, card in enumerate(lookup_view.candidate_cards(result)):
+        with st.container(border=True):
+            picture, text = st.columns([1, 3])
+            if card.thumbnail:
+                picture.image(card.thumbnail, width=72)
+            text.markdown(f"**{card.title}**")
+            if card.line:
+                text.caption(card.line)
+            text.button("Dit is mijn product", key=f"ean_pick_{index}", on_click=_ask_pick, args=(index,))
+    if result.product_url:
+        st.link_button("Bekijk alle resultaten op Google Shopping", result.product_url)
+    with st.expander("Stappen"):
+        for step in result.steps:
+            st.write(step)
+
+
 def _show(result):
+    if result.status == lookup.CHOOSE:
+        _show_candidates(result)
+        return
     shown = getattr(st, lookup_view.severity(result))
     headline = lookup_view.headline(result)
     shown(f"**{headline}**" if headline else result.message)
@@ -155,6 +222,8 @@ def _show(result):
     note = lookup_view.read_note(result)
     if note:
         st.caption(note)
+    if st.session_state.get("ean_choose_result") is not None:
+        st.button("Ander product kiezen", key="ean_back", on_click=_back_to_choice)
     cached_at = st.session_state.get("ean_cached_at")
     if cached_at:
         minutes = max(1, round((time.time() - cached_at) / 60))
@@ -189,7 +258,9 @@ def _connection_test(using_serp):
     name = "SerpApi" if using_serp else "Beslist"
     with st.spinner(f"{name} testen..."):
         result = _lookup(lookup.SAMPLE_EAN)
-    if result.worked:
+    if result.status == lookup.CHOOSE:
+        st.success(f"SerpApi werkt: {len(result.candidates)} producten gevonden voor het testproduct.")
+    elif result.worked:
         if using_serp:
             st.success(f"SerpApi werkt: {len(result.offers)} aanbiedingen voor het testproduct.")
         else:
@@ -225,12 +296,22 @@ def render():
     # is tapped: outside a form a phone could show the result of the previous input.
     form = st.form("ean_form")
     text = form.text_input("bol-link of EAN", value=shared, key="ean_text", placeholder="Plak hier")
+    hint = form.text_input(
+        "Productnaam (optioneel)",
+        key="ean_hint",
+        placeholder="bijv. Kérastase Gloss Absolu shampoo",
+        help="Google zoekt niet exact op EAN. Met de naam komt je product bovenaan de lijst.",
+    )
     clicked = form.form_submit_button("Zoek beste aanbieding", type="primary")
 
-    if st.session_state.pop("ean_force", False) and st.session_state.get("ean_last"):
-        _run(st.session_state["ean_last"], fresh=True)
+    pick = st.session_state.pop("ean_pick", None)
+    if pick is not None:
+        _choose(pick)
+    elif st.session_state.pop("ean_force", False) and st.session_state.get("ean_last"):
+        last_text, last_hint = st.session_state["ean_last"]
+        _run(last_text, last_hint, fresh=True)
     elif clicked:
-        _run(text)
+        _run(text, hint)
     elif shared and st.session_state.get("ean_autorun") != shared:
         st.session_state["ean_autorun"] = shared
         _run(shared)
