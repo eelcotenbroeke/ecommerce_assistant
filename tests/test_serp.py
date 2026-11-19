@@ -211,9 +211,30 @@ def test_rank_puts_the_best_name_match_first_but_only_a_good_match_is_picked_aut
     ranked = serp.rank(cands, "shampoo hydra glaze foo bar baz")  # 3 of 6 words: TITLE
     assert [c.key for c in ranked] == ["111", "222"]
     assert ranked[0].score == 0.5 and ranked[1].score == 0.0
-    assert serp.auto_pick(ranked, "shampoo hydra glaze foo bar baz") is None  # 0.5 < 0.75
-    assert serp.auto_pick(serp.rank(cands, "masque"), "masque").key == "222"
+    assert serp.auto_pick(ranked, "shampoo hydra glaze foo bar baz") is None  # 0.5 < 1.0
+    assert serp.auto_pick(serp.rank(cands, "masque"), "masque") is None  # one word: too vague
     assert serp.auto_pick(serp.rank(cands, None), None) is None
+    specific = "kerastase gloss absolu masque 200 ml"  # every word in one title, the other trails
+    assert serp.auto_pick(serp.rank(cands, specific), specific).key == "222"
+
+
+def test_a_short_name_never_settles_the_choice_even_when_one_title_has_all_its_words():
+    ranked = serp.rank(serp.candidates(two_products().shopping["shopping_results"]), "masque")
+    assert ranked[0].score == 1.0 and ranked[1].score == 0.0
+    assert serp.auto_pick(ranked, "masque") is None
+    assert serp.auto_pick(ranked[:1], "masque").key == ranked[0].key  # a single candidate is no choice
+
+
+def test_a_specific_name_needs_a_clear_lead_over_the_second_title():
+    cands = serp.candidates(
+        [
+            item("A.nl", 10.0, product_id="1", title="Segafredo Intermezzo koffiebonen 1 kg bio"),
+            item("B.nl", 11.0, product_id="2", title="Segafredo Intermezzo koffiebonen 1 kg"),
+        ]
+    )
+    name = "segafredo intermezzo koffiebonen 1 kg bio"  # 6 of 6 words against 5 of 6: a lead of 0.17
+    assert [round(c.score, 2) for c in serp.rank(cands, name)] == [1.0, 0.83]
+    assert serp.auto_pick(serp.rank(cands, name), name) is None
 
 
 def test_dollar_prices_missing_prices_and_missing_shops_are_skipped():

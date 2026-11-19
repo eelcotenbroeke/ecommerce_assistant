@@ -229,7 +229,10 @@ def _web_link(url):
 
 
 MEMBER_BADGE = "Thuiswinkel Waarborg"
-NO_MEMBER_OFFER = "Geen leverbaar aanbod bij een Thuiswinkel Waarborg-winkel."
+NO_MEMBER_NOTE = (
+    "Geen winkel van de ledenlijst van Thuiswinkel Waarborg heeft dit leverbaar. Hieronder staan "
+    "alle winkels: controleer de winkel voordat je koopt."
+)
 
 
 def is_member_offer(offer, member_list):
@@ -242,7 +245,8 @@ def is_member_offer(offer, member_list):
 def apply_member_filter(result, member_list, only_members=True):
     """(result, hidden): without the offers of shops that are not members, when only members are
     wanted. The recommendation is made again among the offers left, so it never names a hidden
-    shop. bol and Amazon always stay."""
+    shop. bol and Amazon always stay. When no member is left with a deliverable offer nothing is
+    hidden: all shops are shown, with a note saying that none is a member."""
     if not only_members or member_list is None or not result.offers:
         return result, 0
     kept = tuple(offer for offer in result.offers if is_member_offer(offer, member_list))
@@ -250,10 +254,10 @@ def apply_member_filter(result, member_list, only_members=True):
     if not hidden:
         return result, 0
     advice = recommend(kept)
-    fields = {"offers": kept, "recommendation": advice}
     if advice is None and result.recommendation is not None:
-        fields.update(status=lookup.UNAVAILABLE, message=NO_MEMBER_OFFER)
-    return replace(result, **fields), hidden
+        # an empty screen helps nobody: show every shop, with a warning that none is a member
+        return replace(result, notes=(NO_MEMBER_NOTE, *result.notes)), 0
+    return replace(result, offers=kept, recommendation=advice), hidden
 
 
 def hidden_line(hidden):

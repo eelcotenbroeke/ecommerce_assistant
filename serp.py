@@ -41,7 +41,9 @@ NOT_FOUND_BY_EAN = (
 )
 NOT_FOUND_BY_NAME = "Google Shopping vond niets voor \u201c{}\u201d. Probeer een andere naam, bijvoorbeeld merk en productnaam."
 MAX_CANDIDATES = 12  # shown to the owner
-MIN_AUTO_COVERAGE = 0.75  # share of the owner's product-name words a title needs for a pick
+MIN_AUTO_WORDS = 4  # a shorter name ("segafredo bonen") names a brand and a kind, not one product
+MIN_AUTO_COVERAGE = 1.0  # share of the product-name words a title needs for a pick: all of them
+MIN_AUTO_MARGIN = 0.25  # how far the best title must lead the second one
 
 _DELIVERY_WORDS_RE = re.compile(r"levering|bezorg|verzend|delivery|shipping", re.IGNORECASE)
 _CONDITIONAL_RE = re.compile(
@@ -342,10 +344,15 @@ def rank(cands, hint=None):
 
 
 def auto_pick(ranked, hint=None):
-    """The candidate when there is no real choice: one product, or one clearly matching the name."""
+    """The candidate when there is no real choice: one product, or one that a specific name fits
+    word for word while the next one trails clearly. A short or vague name never settles it: a wrong
+    silent pick makes every price after it worthless (2 of 2 picks on 3-word names were wrong in the
+    keyword Testrun of 2026-11-19)."""
     if len(ranked) == 1:
         return ranked[0]
-    if hint and ranked and ranked[0].score >= MIN_AUTO_COVERAGE and ranked[0].score > ranked[1].score:
+    if not hint or len(ranked) < 2 or len(_words(hint)) < MIN_AUTO_WORDS:
+        return None
+    if ranked[0].score >= MIN_AUTO_COVERAGE and ranked[0].score - ranked[1].score >= MIN_AUTO_MARGIN:
         return ranked[0]
     return None
 

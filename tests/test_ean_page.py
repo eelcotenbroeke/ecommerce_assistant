@@ -610,7 +610,7 @@ def test_a_different_product_name_is_a_different_lookup(network):
     several_products(network)
     at = start(KEY)
     search(at)
-    at.text_input(key="ean_hint").set_value("masque")
+    at.text_input(key="ean_hint").set_value("kerastase gloss absolu masque 200 ml")
     search(at)
     assert len(serp_calls(network)) == 3  # the first list is not reused for another name
     assert f"Product volgens Google Shopping: **{OTHER_TITLE}**" in texts(at.markdown)
@@ -798,18 +798,18 @@ def test_a_member_gets_a_badge(network):
     assert "Kruidvat.nl: \u20ac 33,00" in texts(at.success)
 
 
-def test_when_no_member_has_an_offer_the_screen_says_so_and_the_switch_shows_the_rest(network):
+def test_when_no_member_has_an_offer_all_shops_are_shown_with_a_note(network):
     network.serp_answers["google_immersive_product"] = (
         200,
         json.dumps({"product_results": {"stores": [store("Celini.nl", 30.0, shipping_extracted=3.95)]}}),
     )
     at = start(KEY)
     search(at)
-    assert listed_shops(at) == []
-    assert "Geen leverbaar aanbod bij een Thuiswinkel Waarborg-winkel." in texts(at.warning)
-    assert "2 winkels verborgen" in texts(at.caption)  # Celini and Flaconi (from Google's first answer)
-    show_all(at)
+    assert not at.exception
+    # no empty screen: Celini and Flaconi (from Google's first answer) are shown, with a warning
     assert "Celini.nl" in listed_shops(at)
+    assert "Geen winkel van de ledenlijst van Thuiswinkel Waarborg heeft dit leverbaar" in texts(at.info)
+    assert "verborgen" not in texts(at.caption)
     assert "Celini.nl: \u20ac 33,95" in texts(at.success)
 
 
