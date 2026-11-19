@@ -189,3 +189,81 @@ def test_source_line_names_the_search_text_only_when_it_was_not_the_ean():
     assert view.source_line(named) == (
         "Gezocht op EAN 3474637283414 \u00b7 Zoekterm bij Google: K\u00e9rastase Gloss Absolu \u00b7 Bron: Google Shopping"
     )
+
+
+# ------------------------------------------------------------------ Thuiswinkel Waarborg members
+
+import members  # noqa: E402
+
+LIST = members.build(
+    [("kruidvat-nl", "kruidvat.nl"), ("trekpleister", "trekpleister.nl"), ("bol", "bol.com"), ("amazon-nl", "amazon.nl")]
+)
+
+
+def shops(res):
+    return [o.shop for o in res.offers]
+
+
+def test_only_members_hides_the_other_shops_and_says_how_many():
+    res = result(offers=[offer("Celini.nl", 30.0), offer("Kruidvat.nl", 33.0), offer("Trekpleister", 35.0)])
+    shown, hidden = view.apply_member_filter(res, LIST)
+    assert hidden == 1
+    assert shops(shown) == ["Kruidvat.nl", "Trekpleister"]
+    assert shown.recommendation.pick.shop == "Kruidvat.nl"  # not the hidden, cheaper Celini
+    assert res.recommendation.pick.shop == "Celini.nl" and len(res.offers) == 3  # the original is untouched
+    line = view.hidden_line(hidden)
+    assert line.startswith("1 winkel verborgen: niet op de ledenlijst van Thuiswinkel Waarborg")
+    assert "19-11-2026" in line
+    assert view.hidden_line(3).startswith("3 winkels verborgen")
+    assert view.hidden_line(0) is None
+
+
+def test_the_filter_off_or_nothing_to_hide_changes_nothing():
+    res = result(offers=[offer("Celini.nl", 30.0), offer("Kruidvat.nl", 33.0)])
+    assert view.apply_member_filter(res, LIST, only_members=False) == (res, 0)
+    assert view.apply_member_filter(res, None) == (res, 0)
+    members_only = result(offers=[offer("Kruidvat.nl", 33.0), offer("Trekpleister", 35.0)])
+    assert view.apply_member_filter(members_only, LIST) == (members_only, 0)
+    assert view.apply_member_filter(result(), LIST) == (result(), 0)
+
+
+def test_bol_and_amazon_stay_even_when_the_list_does_not_know_them():
+    empty = members.build([])
+    res = result(offers=[offer("bol.com", 40.0), offer("Amazon.nl", 41.0), offer("Celini.nl", 30.0)])
+    shown, hidden = view.apply_member_filter(res, empty)
+    assert shops(shown) == ["bol.com", "Amazon.nl"] and hidden == 1
+    assert shown.recommendation.pick.shop == "bol.com"
+
+
+def test_the_ten_percent_rule_works_among_the_visible_shops_only():
+    res = result(offers=[offer("Celini.nl", 30.0), offer("Kruidvat.nl", 40.0), offer("bol.com", 43.0)])
+    assert res.recommendation.pick.shop == "Celini.nl"  # 30,00, far below bol: the plain cheapest
+    shown, hidden = view.apply_member_filter(res, LIST)
+    # Kruidvat is the cheapest member (40,00); bol (43,00) is 7,5% above it: the owner picks bol
+    assert shown.recommendation.pick.shop == "bol.com" and shown.recommendation.reason == "preferred"
+    assert shown.recommendation.cheapest.shop == "Kruidvat.nl"
+
+
+def test_no_member_with_a_deliverable_offer_is_a_warning_with_a_clear_message():
+    res = result(offers=[offer("Celini.nl", 30.0), offer("Flaconi.nl", 31.0), offer("Kruidvat.nl", 33.0, deliverable=False)])
+    shown, hidden = view.apply_member_filter(res, LIST)
+    assert hidden == 2 and shops(shown) == ["Kruidvat.nl"]
+    assert shown.recommendation is None and shown.status == lookup.UNAVAILABLE
+    assert shown.message == view.NO_MEMBER_OFFER
+    assert view.severity(shown) == "warning" and view.headline(shown) is None
+    nothing, hidden = view.apply_member_filter(result(offers=[offer("Celini.nl", 30.0)]), LIST)
+    assert shops(nothing) == [] and hidden == 1 and nothing.message == view.NO_MEMBER_OFFER
+
+
+def test_a_result_that_was_already_undeliverable_keeps_its_own_message():
+    res = result(lookup.UNAVAILABLE, offers=[offer("Celini.nl", 30.0, deliverable=False)], message="Geen leverbaar aanbod.")
+    shown, hidden = view.apply_member_filter(res, LIST)
+    assert hidden == 1 and shown.message == "Geen leverbaar aanbod."
+
+
+def test_the_cards_mark_the_members():
+    res = result(offers=[offer("Celini.nl", 30.0), offer("Kruidvat.nl", 33.0)])
+    cards = {c.shop: c.member for c in view.offer_cards(res, LIST)}
+    assert cards == {"Celini.nl": False, "Kruidvat.nl": True}
+    assert {c.member for c in view.offer_cards(res)} == {False}  # no list: nothing is claimed
+    assert view.MEMBER_BADGE == "Thuiswinkel Waarborg"
