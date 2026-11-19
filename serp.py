@@ -40,6 +40,15 @@ NOT_FOUND_BY_EAN = (
     "(merk en productnaam) en zoek opnieuw: dan zoekt Google op de naam."
 )
 NOT_FOUND_BY_NAME = "Google Shopping vond niets voor \u201c{}\u201d. Probeer een andere naam, bijvoorbeeld merk en productnaam."
+NOT_FOUND_SHORTER = (
+    "Google Shopping vond niets voor \u201c{}\u201d, ook niet op een kortere naam (\u201c{}\u201d). "
+    "Probeer een andere naam, bijvoorbeeld merk en productnaam."
+)
+SHORTER_QUERY_NOTE = (
+    "Met de volledige naam vond Google niets; er is gezocht op \u201c{}\u201d. "
+    "Controleer of dit je product is."
+)
+RETRY_WORDS = 5  # a second try on a shorter name keeps this many words
 MAX_CANDIDATES = 12  # shown to the owner
 MAX_EXTRA_STORE_PAGES = 1  # next pages of the store list that are followed (one search each)
 MORE_STORES_NOTE = (
@@ -334,6 +343,18 @@ def candidates(items):
     return result
 
 
+def shorter(query):
+    """A shorter search term for a second try, or None when it would not be shorter.
+
+    Shop links and long names carry colour names, codes and marketing words ("011 rosy sculpt
+    2-in-1") that make Google Shopping answer with nothing. The second try drops the numbers and
+    keeps the first words, which are the brand and the product line.
+    """
+    words = [word for word in re.findall(r"\S+", query or "") if not word.isdigit()]
+    short = " ".join(words[:RETRY_WORDS])
+    return short if short and short.lower() != (query or "").strip().lower() else None
+
+
 def similarity(hint, title):
     """Share of the words of `hint` that also occur in `title` (0 when there is no hint)."""
     wanted = set(_words(hint))
@@ -482,11 +503,35 @@ def serp_source(fetch_json, now=datetime.now, guard=None, hint=None):
                 SOURCE_ERROR, f"Google Shopping (SerpApi) gaf geen antwoord: {error}", SOURCE_NAME, query=query
             )
         items = [item for item in data.get("shopping_results") or [] if isinstance(item, dict)]
+        notes = []
         if not items:
             steps.append("Google Shopping: 0 resultaten")
             if error and "any results" not in str(error).lower():
                 return Failure(SOURCE_ERROR, f"SerpApi meldt: {error}", SOURCE_NAME, query=query)
-            return Failure(NOT_FOUND, NOT_FOUND_BY_NAME.format(query) if query else NOT_FOUND_BY_EAN, SOURCE_NAME, query=query)
+            retry = shorter(query) if query else None
+            if retry is None:
+                return Failure(
+                    NOT_FOUND, NOT_FOUND_BY_NAME.format(query) if query else NOT_FOUND_BY_EAN, SOURCE_NAME, query=query
+                )
+            # one more search, on a shorter name; the candidates are still ranked on the full name
+            reason = guard(2 * SEARCH_COST) if guard else None
+            if reason:
+                steps.append("Kortere zoekterm: niet gezocht (budget)")
+                return Failure(SOURCE_ERROR, reason, SOURCE_NAME, query=query)
+            steps.append(f"Opnieuw gezocht op een kortere naam: {retry}")
+            retry_data, retry_error = fetch_json({"engine": "google_shopping", "q": retry, "hl": "nl", "gl": "nl"})
+            items = [
+                item for item in (retry_data or {}).get("shopping_results") or [] if isinstance(item, dict)
+            ]
+            if not items:
+                steps.append("Google Shopping: 0 resultaten op de kortere naam")
+                if retry_data is None or (retry_error and "any results" not in str(retry_error).lower()):
+                    return Failure(
+                        SOURCE_ERROR, f"Google Shopping (SerpApi) gaf geen antwoord: {retry_error}", SOURCE_NAME, query=retry
+                    )
+                return Failure(NOT_FOUND, NOT_FOUND_SHORTER.format(query, retry), SOURCE_NAME, query=retry)
+            data, query = retry_data, retry
+            notes.append(SHORTER_QUERY_NOTE.format(retry))
 
         ranked = rank(candidates(items), rank_hint)
         steps.append(f"Google Shopping: {len(items)} resultaten, {len(ranked)} producten")
@@ -495,7 +540,8 @@ def serp_source(fetch_json, now=datetime.now, guard=None, hint=None):
             if len(ranked) > 1:
                 steps.append("Product gekozen op je productnaam")
             # the guard above already looked at both steps: no second look at the account
-            return _finish(picked, fetch_json, now, None, steps, check_note=True, query=query, page_guard=guard)
+            found = _finish(picked, fetch_json, now, None, steps, check_note=True, query=query, page_guard=guard)
+            return replace(found, notes=(*notes, *found.notes)) if notes and isinstance(found, Found) else found
 
         metadata = data.get("search_metadata")
         see_all = _https(metadata.get("google_shopping_url")) if isinstance(metadata, dict) else None
@@ -507,6 +553,7 @@ def serp_source(fetch_json, now=datetime.now, guard=None, hint=None):
             ),
             product_url=see_all,
             query=query,
+            notes=tuple(notes),
         )
 
     return source

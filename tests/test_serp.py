@@ -695,3 +695,95 @@ def test_without_a_next_page_token_no_extra_search_is_made():
     fake = PagedSerp(first_page(), None, {})
     result = run(fake)
     assert len(fake.calls) == 2 and serp.MORE_STORES_NOTE not in result.notes
+
+
+# ------------------------------------------------------------------ a second try on a shorter name
+
+LONG_NAME = "maybelline new york sculpting stix 011 rosy sculpt 2 in 1 eyeliner"
+SHORT_NAME = "maybelline new york sculpting stix"
+
+
+class QuerySerp(FakeSerp):
+    """Google answers nothing for the long name and products for the short one."""
+
+    def __init__(self, short_items, **kwargs):
+        super().__init__(shopping=[], stores=[], **kwargs)
+        self.short_items = short_items
+
+    def __call__(self, params):
+        if params["engine"] == "google_shopping":
+            self.calls.append(params)
+            found = self.short_items if params["q"] == SHORT_NAME else []
+            return {"shopping_results": found}, None
+        return super().__call__(params)
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        (LONG_NAME, SHORT_NAME),
+        ("Kérastase Gloss Absolu Bain Hydra-Glaze Shampoo 500 ml", "Kérastase Gloss Absolu Bain Hydra-Glaze"),
+        ("weleda baby shampoo", None),  # already short
+        ("weleda baby shampoo 400", "weleda baby shampoo"),  # a bare number is dropped too
+        ("a b c d e f", "a b c d e"),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_shorter(query, expected):
+    assert serp.shorter(query) == expected
+
+
+def test_nothing_found_for_the_long_name_gives_one_more_search_on_a_shorter_name():
+    pink = item("Kruidvat.nl", 7.99, product_id="9", title="Maybelline Sculpting Stix 011 Rosy Sculpt eyeliner")
+    fake = QuerySerp([item("Etos", 8.49, product_id="8", title="Maybelline Sculpting Stix 02 Mocha"), pink])
+    result = run_by_name(fake, name=LONG_NAME)
+    assert [c.get("q") for c in fake.calls if c["engine"] == "google_shopping"] == [LONG_NAME, SHORT_NAME]
+    assert result.query == SHORT_NAME  # the screen shows what Google was really asked
+    assert f"Opnieuw gezocht op een kortere naam: {SHORT_NAME}" in result.steps
+    assert serp.SHORTER_QUERY_NOTE.format(SHORT_NAME) in result.notes
+    assert result.status == lookup.CHOOSE  # two products; the full name ranks the shade first
+    assert result.candidates[0].title.startswith("Maybelline Sculpting Stix 011")
+    assert serp.SHORTER_QUERY_NOTE.format(SHORT_NAME) in result.notes
+
+
+def test_a_single_product_on_the_shorter_name_goes_on_to_its_shops_with_the_note():
+    fake = QuerySerp([item("Kruidvat.nl", 7.99, product_id="9", title="Maybelline Sculpting Stix eyeliner")])
+    result = run_by_name(fake, name=LONG_NAME)
+    assert result.status == lookup.OK and result.query == SHORT_NAME
+    assert serp.SHORTER_QUERY_NOTE.format(SHORT_NAME) in result.notes
+    assert [c["engine"] for c in fake.calls] == ["google_shopping", "google_shopping", "google_immersive_product"]
+
+
+def test_nothing_on_the_shorter_name_either_says_both_terms_and_stops():
+    fake = QuerySerp([])
+    result = run_by_name(fake, name=LONG_NAME)
+    assert result.status == lookup.NOT_FOUND and result.query == SHORT_NAME
+    assert LONG_NAME in result.message and SHORT_NAME in result.message and "ook niet" in result.message
+    assert len(fake.calls) == 2
+
+
+def test_a_name_that_is_already_short_is_not_searched_twice():
+    fake = FakeSerp(shopping=[], stores=[])
+    result = run_by_name(fake, name="weleda baby shampoo")
+    assert result.status == lookup.NOT_FOUND and len(fake.calls) == 1
+
+
+def test_a_barcode_that_finds_nothing_is_not_retried():
+    fake = FakeSerp(shopping=[], stores=[])
+    result = run(fake)
+    assert result.status == lookup.NOT_FOUND and len(fake.calls) == 1
+
+
+def test_the_budget_is_asked_before_the_second_try():
+    fake = QuerySerp([item("Kruidvat.nl", 7.99)])
+    asked = []
+
+    def guard(cost):
+        asked.append(cost)
+        return "Maandbudget bereikt" if len(asked) >= 2 else None
+
+    source = serp.serp_source(fake, now=lambda: "NOW", guard=guard, hint=LONG_NAME)
+    result = lookup.lookup("", None, source=source, by_name=True)
+    assert asked == [2, 2] and result.status == lookup.SOURCE_ERROR and result.message == "Maandbudget bereikt"
+    assert len(fake.calls) == 1 and "Kortere zoekterm: niet gezocht (budget)" in result.steps
