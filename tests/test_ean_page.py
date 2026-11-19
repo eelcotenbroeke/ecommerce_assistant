@@ -285,7 +285,7 @@ def test_with_a_key_the_offers_come_from_google_shopping(network):
     at = start(KEY)
     assert not at.exception
     assert not at.warning
-    assert [b.label for b in at.button] == ["Zoek beste aanbieding", "Test SerpApi", "Test pagina's"]
+    assert [b.label for b in at.button] == ["Zoek beste aanbieding", "Test SerpApi", "Test pagina's", "Start testrun"]
     assert serp_calls(network) == []
     assert "SerpApi deze maand: 12 van 100 gebruikt, nog 88 over" in texts(at.caption)
     search(at)
@@ -882,3 +882,111 @@ def test_a_session_of_twenty_five_products_stays_in_the_raw_answers_download(net
     assert not at.exception
     log = at.session_state["serp_log"]
     assert len(log) == 50 and ean_page.LOG_LIMIT >= 50
+
+
+# ------------------------------------------------------------------ the testrun
+
+TESTRUN_TABLE = (
+    "nr\tcategorie\turl\tzoekwoorden\tproduct\n"
+    "1\tbeauty_gezondheid\thttps://www.kruidvat.nl/biodermal/p/130611\tkerastase gloss absolu\tkerastase gloss absolu shampoo 500 ml\n"
+    "2\tbeauty_gezondheid\thttps://www.haibu.nl/kerastase-drops.html\tkerastase drops\tkerastase gloss absolu masque 200 ml\n"
+)
+
+
+def run_testrun(at, table=TESTRUN_TABLE, subset=None):
+    at.text_area(key="bench_text").set_value(table).run()  # the start button is enabled once the table is read
+    if subset:
+        at.radio(key="bench_subset").set_value(subset).run()
+    return at.button(key="bench_start").click().run()
+
+
+def test_the_testrun_is_only_there_with_a_key(network):
+    assert "bench_text" not in [t.key for t in start().text_area]
+    assert "bench_text" in [t.key for t in start(KEY).text_area]
+
+
+def test_the_testrun_shows_the_plan_and_what_it_costs_at_most(network):
+    at = start(KEY)
+    at.text_area(key="bench_text").set_value(TESTRUN_TABLE).run()
+    assert "4 runs, maximaal 4 SerpApi-zoekopdrachten" in texts(at.info)  # 2 keyword runs; the links of kruidvat and haibu cost none
+    assert "nog 88 over" in texts(at.info)
+    assert serp_calls(network) == []  # nothing runs before the button
+
+
+def test_the_testrun_runs_every_row_on_the_keywords_and_on_the_link(network):
+    network.serp_answers["google_shopping"] = (
+        200,
+        json.dumps({"shopping_results": [
+            item("Celini.nl", 35.28),
+            item("Masque.nl", 15.0, product_id="222", title="Kérastase Gloss Absolu Masque 200 ml", token="other"),
+        ]}),
+    )
+    at = start(KEY)
+    run_testrun(at)
+    assert not at.exception
+    records = at.session_state["bench_records"]
+    assert [(r["nr"], r["soort"]) for r in records] == [(1, "zoekwoorden"), (2, "zoekwoorden"), (1, "link"), (2, "link")]
+    first, second, link, _ = records
+    assert first["status"] == "ok" and "Shampoo" in first["gevonden_product"] and first["zoekterm"] == "kerastase gloss absolu"
+    assert second["status"] == "ok" and "Masque" in second["gevonden_product"]
+    assert first["lijst_getoond"] and first["gekozen"]["plaats_in_lijst"] == 1  # both products fit the keywords: a list
+    assert second["lijst_getoond"] and second["gekozen"]["plaats_in_lijst"] == 2  # and the truth says the masque
+    assert first["zoekopdrachten"] == 2 and len(first["ruwe_antwoorden"]) == 2 and first["holdout"] is False
+    # the links of shops the app does not know are rejected without a request
+    assert link["status"] == "invalid_input" and link["zoekopdrachten"] == 0 and link["ruwe_antwoorden"] == []
+    assert len(serp_calls(network)) == 4
+    assert at.session_state["bench_running"] is False
+    meta = at.session_state["bench_meta"]
+    assert meta["runs_gedraaid"] == 4 and meta["zoekopdrachten"] == 4 and meta["problemen_bij_het_lezen"] == []
+    assert "budget_voor" in meta and "budget_na" in meta
+    assert "4 runs klaar, 4 zoekopdrachten gebruikt." in texts(at.caption)
+    assert len(at.get("download_button")) >= 1
+
+
+def test_the_testrun_taps_the_product_that_matches_the_truth_when_a_list_is_shown(network):
+    network.serp_answers["google_shopping"] = (
+        200,
+        json.dumps({"shopping_results": [
+            item("A.nl", 38.0, product_id="111", title="Kérastase Gloss Absolu Bain shampoo 500 ml"),
+            item("B.nl", 15.0, product_id="222", title="Kérastase Gloss Absolu Masque 200 ml", token="other"),
+        ]}),
+    )
+    at = start(KEY)
+    run_testrun(at, TESTRUN_TABLE.split("\n")[0] + "\n" + TESTRUN_TABLE.split("\n")[2] + "\n")  # only row 2
+    record = next(r for r in at.session_state["bench_records"] if r["soort"] == "zoekwoorden")
+    assert record["nr"] == 2 and record["lijst_getoond"] is True and len(record["lijst"]) == 2
+    assert record["gekozen"]["plaats_in_lijst"] == 2 and record["gekozen"]["twijfel"] is False
+    assert "Masque" in record["gevonden_product"] and record["zoekopdrachten"] == 2
+
+
+def test_the_testrun_can_be_limited_to_the_verdict_set(network):
+    at = start(KEY)
+    run_testrun(at, subset="even")
+    records = at.session_state["bench_records"]
+    assert {r["nr"] for r in records} == {2} and len(records) == 2
+
+
+def test_a_run_that_crashes_becomes_a_record_and_the_rest_goes_on(network, monkeypatch):
+    real = ean_page._lookup
+
+    def flaky(text, hint=""):
+        if text == "kerastase drops":
+            raise RuntimeError("kapot")
+        return real(text, hint)
+
+    monkeypatch.setattr(ean_page, "_lookup", flaky)
+    at = start(KEY)
+    run_testrun(at)
+    assert not at.exception
+    records = at.session_state["bench_records"]
+    assert len(records) == 4
+    broken = next(r for r in records if r["nr"] == 2 and r["soort"] == "zoekwoorden")
+    assert broken["status"] == "error" and "RuntimeError: kapot" in broken["melding"]
+    assert next(r for r in records if r["nr"] == 1 and r["soort"] == "zoekwoorden")["status"] == "ok"
+
+
+def test_a_table_with_problems_says_so_and_a_missing_column_blocks_the_start(network):
+    at = start(KEY)
+    at.text_area(key="bench_text").set_value("nr\turl\tzoekwoorden\n1\thttps://x.nl\tjas").run()
+    assert "product" in texts(at.warning)
+    assert at.button(key="bench_start").disabled

@@ -18,6 +18,7 @@ from datetime import datetime
 import streamlit as st
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
+import benchmark
 import budget
 import fetching
 import lookup
@@ -279,6 +280,113 @@ def _raw_answers():
         )
 
 
+def _bench_run_one(row, mode):
+    """One run of the testrun: the lookup, the tap on the right product, one record of it."""
+    text = benchmark.text_of(row, mode)
+    calls_before = st.session_state.get("serp_calls", 0)
+    started = time.time()
+    choose = pick = None
+    try:
+        result = _lookup(text, "")
+        if result.status == lookup.CHOOSE:
+            choose = result
+            pick = benchmark.pick_candidate(result.candidates, row.product)
+            if pick is not None:
+                result = lookup.finish_choice(choose, pick.candidate)
+                _refresh_account()
+    except Exception as error:  # one broken run must not lose the rest of the session
+        result = lookup.LookupResult("error", f"{type(error).__name__}: {error}")
+    searches = st.session_state.get("serp_calls", 0) - calls_before
+    raw = st.session_state.get("serp_log", [])[-searches:] if searches > 0 else []
+    return benchmark.record(
+        row, mode, result, choose=choose, pick=pick, searches=searches, seconds=time.time() - started, raw=raw
+    )
+
+
+def _bench_start(rows, problems, plan, subset):
+    account = st.session_state.get("serp_account")
+    st.session_state["bench_queue"] = list(plan)
+    st.session_state["bench_total"] = len(plan)
+    st.session_state["bench_records"] = []
+    st.session_state["bench_running"] = True
+    st.session_state["bench_meta"] = {
+        "gemaakt": _now().isoformat(timespec="seconds"),
+        "regels_in_tabel": len(rows),
+        "welke_regels": subset,
+        "aantal_runs": len(plan),
+        "problemen_bij_het_lezen": problems,
+        "budget_voor": budget.summary(account, _limit()) if account else None,
+        "afspraak": "even nr = verdictset, oneven nr = ontwikkelset; product = waarheid, wordt nooit gezocht",
+    }
+
+
+def _bench_finish():
+    """The queue is empty or the owner stopped: close the run and note the budget afterwards."""
+    st.session_state["bench_running"] = False
+    meta = st.session_state.setdefault("bench_meta", {})
+    account = _refresh_account() if _api_key() else None
+    records = st.session_state.get("bench_records") or []
+    meta["klaar"] = _now().isoformat(timespec="seconds")
+    meta["budget_na"] = budget.summary(account, _limit()) if account else None
+    meta["runs_gedraaid"] = len(records)
+    meta["zoekopdrachten"] = sum(r["zoekopdrachten"] for r in records)
+
+
+def _testrun():
+    st.caption(
+        "Plak de tabel uit Excel (kolommen nr, categorie, url, zoekwoorden, product; de eerste regel mag de "
+        "kopjes zijn). Elke regel wordt twee keer gedraaid: op de zoekwoorden en op de link. Komt er een "
+        "lijst met producten, dan tikt de test het product dat bij \u201cproduct\u201d past, zoals jij zou doen. "
+        "Houd dit tabblad open tot het klaar is."
+    )
+    text = st.text_area("Tabel", key="bench_text", height=140, placeholder="nr\tcategorie\turl\tzoekwoorden\tproduct")
+    labels = {benchmark.ALL: "Alle regels", benchmark.EVEN: "Alleen even nummers (verdictset)", benchmark.ODD: "Alleen oneven nummers (ontwikkelset)"}
+    subset = st.radio("Welke regels", list(labels), format_func=labels.get, key="bench_subset")
+    with_keywords = st.checkbox("Zoekwoorden", value=True, key="bench_keywords")
+    with_links = st.checkbox("Links", value=True, key="bench_links")
+    rows, problems = benchmark.parse_table(text) if text.strip() else ([], [])
+    plan = benchmark.tasks(rows, subset, links=with_links, keywords=with_keywords)
+    for problem in problems:
+        st.warning(problem)
+    running = st.session_state.get("bench_running", False)
+    if plan and not running:
+        account = st.session_state.get("serp_account")
+        left = budget.summary(account, _limit()) if account else "Het maandverbruik is onbekend."
+        st.info(f"{len(plan)} runs, maximaal {benchmark.max_searches(plan)} SerpApi-zoekopdrachten. {left}")
+    if st.button("Start testrun", key="bench_start", disabled=not plan or running):
+        _bench_start(rows, problems, plan, subset)
+        st.rerun()
+
+    records = st.session_state.get("bench_records") or []
+    queue = st.session_state.get("bench_queue") or []
+    if records:
+        st.dataframe(benchmark.summary_rows(records), hide_index=True)
+    if running and queue:
+        total = st.session_state.get("bench_total", len(queue) + len(records))
+        row, mode = queue[0]
+        st.progress(len(records) / total, text=f"Bezig met {len(records) + 1} van {total}: nr {row.nr}, {mode}")
+        if st.button("Stop", key="bench_stop"):
+            _bench_finish()
+            st.rerun()
+        record = _bench_run_one(row, mode)
+        queue.pop(0)
+        records.append(record)
+        st.session_state["bench_records"] = records
+        if not queue:
+            _bench_finish()
+        st.rerun()
+    if records and not running:
+        meta = dict(st.session_state.get("bench_meta") or {})
+        st.caption(f"{len(records)} runs klaar, {meta.get('zoekopdrachten', 0)} zoekopdrachten gebruikt.")
+        st.download_button(
+            "Download resultaten (JSON)",
+            data=json.dumps(benchmark.results_document(records, meta), ensure_ascii=False, indent=1, default=str),
+            file_name="testrun-resultaten.json",
+            mime="application/json",
+            key="bench_download",
+        )
+
+
 def _connection_test(using_serp):
     name = "SerpApi" if using_serp else "Beslist"
     with st.spinner(f"{name} testen..."):
@@ -355,6 +463,9 @@ def render():
             _connection_test(using_serp)
     with st.expander("Test winkelpagina's"):
         probe_page.render()
+    if using_serp:
+        with st.expander("Testrun (vergelijking met Google Shopping)"):
+            _testrun()
 
     if using_serp:  # after the test, so the numbers and the download include its calls
         calls = st.session_state.get("serp_calls", 0)
