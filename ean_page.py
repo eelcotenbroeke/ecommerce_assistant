@@ -300,7 +300,7 @@ def render():
         "Productnaam (optioneel)",
         key="ean_hint",
         placeholder="bijv. Kérastase Gloss Absolu shampoo",
-        help="Google zoekt niet exact op EAN. Met de naam komt je product bovenaan de lijst.",
+        help="Google zoekt niet exact op EAN: soms vindt het niets of verkeerde producten. Met een naam zoekt Google op de naam en komt je product bovenaan.",
     )
     clicked = form.form_submit_button("Zoek beste aanbieding", type="primary")
 

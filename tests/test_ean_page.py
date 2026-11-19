@@ -568,3 +568,43 @@ def test_the_connection_test_accepts_a_list_of_products(network):
     at.button(key="ean_conn_test").click().run()
     assert "SerpApi werkt" in texts(at.success)
     assert len(serp_calls(network)) == 1
+
+
+# ------------------------------------------------------------------ searching on the product name
+
+
+def serp_queries(network):
+    return [parse_qs(urlparse(u).query)["q"][0] for u in serp_calls(network) if "google_shopping" in u]
+
+
+def test_without_a_product_name_google_is_asked_for_the_ean(network):
+    at = start(KEY)
+    search(at)
+    assert serp_queries(network) == [EAN]
+    assert "Zoekterm bij Google" not in texts(at.caption)
+
+
+def test_with_a_product_name_google_is_asked_for_the_name_and_the_screen_says_so(network):
+    at = start(KEY)
+    at.text_input(key="ean_hint").set_value("Kérastase Gloss Absolu shampoo")
+    search(at)
+    assert serp_queries(network) == ["Kérastase Gloss Absolu shampoo"]
+    assert f"Gezocht op EAN {EAN} \u00b7 Zoekterm bij Google: Kérastase Gloss Absolu shampoo" in texts(at.caption)
+
+
+def test_an_empty_answer_for_the_ean_points_to_the_product_name_field(network):
+    network.serp_answers["google_shopping"] = (
+        200,
+        json.dumps({"error": "Google hasn't returned any results for this query."}),
+    )
+    at = start(KEY)
+    search(at)
+    assert not at.exception
+    assert "Productnaam" in texts(at.warning)
+    assert listed_shops(at) == []
+    # filling in the name and searching again asks Google for the name
+    network.serp_answers["google_shopping"] = (200, json.dumps({"shopping_results": [item("Celini.nl", 35.28)]}))
+    at.text_input(key="ean_hint").set_value("Kérastase Gloss Absolu")
+    search(at)
+    assert serp_queries(network) == [EAN, "Kérastase Gloss Absolu"]
+    assert "Celini.nl" in listed_shops(at)

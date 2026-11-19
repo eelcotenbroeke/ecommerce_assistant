@@ -68,6 +68,8 @@ def source_line(result):
     parts = []
     if result.ean:
         parts.append(f"Gezocht op EAN {result.ean}")
+    if getattr(result, "query", None):
+        parts.append(f"Zoekterm bij Google: {result.query}")
     if result.source:
         parts.append(f"Bron: {result.source}")
     return " \u00b7 ".join(parts) or None

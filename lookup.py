@@ -57,6 +57,7 @@ class Found:
     read_at: datetime | None = None
     title: str | None = None  # product title as the source calls it
     notes: tuple[str, ...] = ()  # warnings that do not stop the lookup
+    query: str | None = None  # the search text when it was not the barcode (the owner's product name)
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,7 @@ class Failure:
     message: str
     source: str = ""
     product_url: str | None = None
+    query: str | None = None  # the search text when it was not the barcode
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,7 @@ class Choose:
     finish: Callable
     notes: tuple[str, ...] = ()
     product_url: str | None = None  # where the owner can see all results at the source
+    query: str | None = None  # the search text when it was not the barcode
 
 
 @dataclass(frozen=True)
@@ -101,6 +104,7 @@ class LookupResult:
     read_at: datetime | None = None  # when the offers were read
     candidates: tuple = ()  # status CHOOSE: the products to pick from
     pending: Callable | None = None  # status CHOOSE: what `finish_choice` calls
+    query: str | None = None  # what the source searched for when that was not the barcode
 
     @property
     def worked(self):
@@ -244,12 +248,12 @@ def lookup(text, fetch, sleep=time.sleep, now=datetime.now, tolerance=TOLERANCE,
     if isinstance(found, Failure):
         return _result(
             steps, ean, child_gtins, found.status, found.message,
-            source=found.source, product_url=found.product_url,
+            source=found.source, product_url=found.product_url, query=found.query,
         )
     if isinstance(found, Choose):
         return _result(
             steps, ean, child_gtins, CHOOSE, "Kies het product dat je bedoelt.",
-            source=found.source, product_url=found.product_url, notes=found.notes,
+            source=found.source, product_url=found.product_url, notes=found.notes, query=found.query,
             candidates=tuple(found.candidates), pending=found.finish,
         )
     return _from_found(found, steps, ean, child_gtins, tolerance)
@@ -269,6 +273,7 @@ def _from_found(found, steps, ean, child_gtins, tolerance):
         "read_at": found.read_at,
         "product_title": found.title,
         "notes": found.notes,
+        "query": found.query,
     }
     if not found.offers:
         return _result(steps, ean, child_gtins, NO_OFFERS, "Geen aanbiedingen gevonden.", **fields)
@@ -290,5 +295,6 @@ def finish_choice(result, candidate, tolerance=TOLERANCE):
         return _result(
             steps, result.ean, result.child_gtins, found.status, found.message,
             source=found.source or result.source, product_url=found.product_url,
+            query=found.query or result.query,
         )
     return _from_found(found, steps, result.ean, result.child_gtins, tolerance)

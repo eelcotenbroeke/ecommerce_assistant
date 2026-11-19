@@ -398,3 +398,58 @@ def test_a_guard_stopping_the_second_step_keeps_the_first_search_in_the_steps():
 def test_javascript_or_http_links_are_not_kept():
     fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63, link="javascript:alert(1)")], stores=[])
     assert run(fake).offers[0].url is None
+
+
+# ------------------------------------------------------------------ searching on the owner's product name
+
+NAME = "Kérastase Gloss Absolu shampoo"
+
+
+def test_the_bare_ean_is_the_query_without_a_product_name():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[])
+    result = run(fake)
+    assert fake.calls[0]["q"] == EAN
+    assert result.query is None
+
+
+def test_a_product_name_is_the_query_instead_of_the_ean():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[])
+    source = serp.serp_source(fake, now=lambda: "NOW", hint=f"  {NAME} ")
+    result = lookup.lookup(EAN, None, source=source)
+    assert fake.calls[0]["q"] == NAME  # trimmed
+    assert result.ean == EAN and result.query == NAME
+    assert result.status == lookup.OK
+
+
+def test_a_very_long_product_name_is_cut_before_it_is_sent():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[])
+    source = serp.serp_source(fake, now=lambda: "NOW", hint="woord " * 100)
+    lookup.lookup(EAN, None, source=source)
+    assert len(fake.calls[0]["q"]) <= serp.MAX_QUERY_CHARS
+
+
+def test_the_search_text_survives_the_choice_step():
+    fake = two_products()
+    source = serp.serp_source(fake, now=lambda: "NOW", hint="kerastase")
+    result = lookup.lookup(EAN, None, source=source)
+    assert result.status == lookup.CHOOSE and result.query == "kerastase"
+    chosen = lookup.finish_choice(result, result.candidates[1])
+    assert chosen.status == lookup.OK and chosen.query == "kerastase"
+
+
+def test_nothing_found_for_the_ean_tells_the_owner_to_fill_in_the_product_name():
+    fake = FakeSerp(shopping_error="Google hasn't returned any results for this query.")
+    result = run(fake)
+    assert result.status == lookup.NOT_FOUND
+    assert "Productnaam" in result.message and "EAN" in result.message
+    assert result.query is None
+    assert len(fake.calls) == 1
+
+
+def test_nothing_found_for_the_name_asks_for_another_name():
+    fake = FakeSerp(shopping_error="Google hasn't returned any results for this query.")
+    source = serp.serp_source(fake, now=lambda: "NOW", hint="onzinproduct")
+    result = lookup.lookup(EAN, None, source=source)
+    assert result.status == lookup.NOT_FOUND
+    assert "“onzinproduct”" in result.message and "andere naam" in result.message
+    assert result.query == "onzinproduct"
