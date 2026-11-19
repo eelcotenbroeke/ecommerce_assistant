@@ -186,16 +186,40 @@ def test_invalid_input_is_a_warning(network):
     at = start()
     at.text_input(key="ean_text").set_value("shampoo")
     go_button(at).click().run()
-    assert "bol-productlink of een EAN" in texts(at.warning)
+    assert "bol- of Amazon-productlink of een EAN" in texts(at.warning)
     assert network.calls == []
 
 
-def test_amazon_link_asks_for_the_ean(network):
+AMAZON_URL = "https://www.amazon.nl/dp/B01M635J8I"
+
+
+def amazon_page():
+    return (
+        "<html><body><table><tr><td><span>Global Trade Identification Number</span></td>"
+        f"<td><span>0{EAN}</span></td></tr></table></body></html>"
+    )
+
+
+def test_amazon_link_is_read_and_the_lookup_goes_on(network):
+    network.answers[AMAZON_URL] = (200, amazon_page())
     at = start()
-    at.text_input(key="ean_text").set_value("https://www.amazon.nl/dp/B01M635J8I")
+    at.text_input(key="ean_text").set_value("https://www.amazon.nl/-/en/HG/dp/B01M635J8I/?ref_=x&pd_rd_w=y")
     go_button(at).click().run()
+    assert not at.exception
+    assert network.calls[0] == AMAZON_URL  # the product's own page, no tracking
+    assert SEARCH_URL in network.calls
+    assert f"Gezocht op EAN {EAN}" in texts(at.caption)
+    assert at.success  # a recommendation, not a request for the EAN
+
+
+def test_amazon_block_asks_for_the_ean_and_stops(network):
+    network.answers[AMAZON_URL] = (503, "Service Unavailable")
+    at = start()
+    at.text_input(key="ean_text").set_value(AMAZON_URL)
+    go_button(at).click().run()
+    assert "Amazon liet de pagina niet lezen" in texts(at.warning)
     assert "Global Trade Identification Number" in texts(at.warning)
-    assert network.calls == []
+    assert network.calls == [AMAZON_URL]
 
 
 def test_connection_test_reports_success_and_failure(network):

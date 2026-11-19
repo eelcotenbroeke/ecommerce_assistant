@@ -3,8 +3,9 @@
 Pure: the network is passed in, so this module never touches the network or Streamlit and is
 tested with fake fetches. Steps, as seen by the owner:
 
-1. A barcode is used as is. A bol product link is fetched to read its EAN. An Amazon link is not
-   fetched (Amazon blocks automated access); the owner is asked for the EAN instead.
+1. A barcode is used as is. A bol or Amazon product link is fetched (without its tracking
+   parameters) to read its EAN; when the shop refuses (a block is never worked around) the owner
+   is asked for the EAN instead.
 2. An *offers source* turns the EAN into a list of offers. Two exist: Beslist (`beslist_source`,
    pages fetched with `fetch`) and Google Shopping through SerpApi (`serp.serp_source`). A source
    returns `Found`, `Failure` or `Choose`: Google Shopping cannot match a barcode exactly, so it
@@ -27,6 +28,7 @@ from urllib.parse import urlparse
 from beslist import Offer, find_product_url, parse_offers, product_ean, search_url
 from choice import TOLERANCE, Recommendation, recommend
 from ean import extract_ids, normalize_gtin, parse_product_url
+from pageprobe import looks_blocked
 
 PAUSE_SECONDS = 2.0  # between the two requests to Beslist
 SAMPLE_EAN = "3474637283414"  # a product known to be on Beslist, for connection tests
@@ -133,6 +135,37 @@ def _bol_page_url(text):
     return f"https://{parts.hostname}{parts.path}"
 
 
+_AMAZON_EAN_HELP = (
+    "Plak de EAN zelf: die staat op de Amazon-pagina onder Productinformatie bij "
+    "'Global Trade Identification Number'."
+)
+
+
+def _amazon_page_url(text, ref):
+    """The Amazon page to fetch: the product's own /dp/ page on the host that was pasted."""
+    text = text if "://" in text else "https://" + text
+    return f"https://{urlparse(text).hostname}/dp/{ref.product_id}"
+
+
+def _ean_from_amazon(text, ref, fetch, steps, stop):
+    url = _amazon_page_url(text, ref)
+    status, html = fetch(url)
+    steps.append(_describe("Amazon-pagina", status, html))
+    if status is not None and looks_blocked(status, html or ""):
+        return stop(
+            NEEDS_EAN,
+            "Amazon liet de pagina niet lezen (waarschijnlijk een bot-controle). Dit wordt niet "
+            f"omzeild. {_AMAZON_EAN_HELP}",
+        )
+    if status != 200 or not html:
+        return stop(NEEDS_EAN, f"{_failure('Amazon', status, html)} {_AMAZON_EAN_HELP}")
+    ids = extract_ids(html)
+    if not ids.ean:
+        return stop(NEEDS_EAN, f"Geen eenduidige EAN op de Amazon-pagina gevonden. {_AMAZON_EAN_HELP}")
+    steps.append(f"EAN van de Amazon-pagina: {ids.ean}")
+    return ids.ean, ids.child_gtins, None
+
+
 def _ean_from_input(text, fetch, steps):
     """(ean, child_gtins, early_result): early_result is set when there is no EAN to continue with."""
     cleaned = (text or "").strip()
@@ -141,7 +174,7 @@ def _ean_from_input(text, fetch, steps):
         return None, (), LookupResult(status, message, steps=tuple(steps))
 
     if not cleaned:
-        return stop(INVALID_INPUT, "Plak een bol-productlink of een EAN.")
+        return stop(INVALID_INPUT, "Plak een bol- of Amazon-productlink of een EAN.")
     if re.fullmatch(r"[\d\s\-]+", cleaned):
         gtin = normalize_gtin(cleaned)
         if gtin:
@@ -152,14 +185,10 @@ def _ean_from_input(text, fetch, steps):
     if ref is None:
         return stop(
             INVALID_INPUT,
-            "Plak een bol-productlink of een EAN. Andere winkels worden nog niet herkend.",
+            "Plak een bol- of Amazon-productlink of een EAN. Andere winkels worden nog niet herkend.",
         )
     if ref.shop == "amazon":
-        return stop(
-            NEEDS_EAN,
-            "Amazon laat automatisch ophalen niet toe. Plak de EAN: die staat op de Amazon-pagina "
-            "onder Productinformatie bij 'Global Trade Identification Number'.",
-        )
+        return _ean_from_amazon(cleaned, ref, fetch, steps, stop)
 
     status, html = fetch(_bol_page_url(cleaned))
     steps.append(_describe("bol-pagina", status, html))

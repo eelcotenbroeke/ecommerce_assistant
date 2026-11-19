@@ -147,6 +147,15 @@ def _scan(html):
     return scan
 
 
+_TITLE_TAIL_RE = re.compile(r"\s+:\s+Amazon\.[a-z.]{2,6}(?::.*)?$", re.IGNORECASE)
+
+
+def clean_title(title):
+    """The product name from a page title: Amazon appends " : Amazon.nl: <department>"."""
+    text = " ".join(str(title or "").split())
+    return _TITLE_TAIL_RE.sub("", text).strip()
+
+
 def _clip(value, limit=120):
     text = " ".join(str(value).split())
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
@@ -297,7 +306,7 @@ class PageReport:
         return tuple(steps)
 
 
-def _looks_blocked(status, text):
+def looks_blocked(status, text):
     if status in _BLOCK_STATUSES:
         return True
     if status == 200 and len(text) < 8000:
@@ -312,7 +321,7 @@ def read_page(url, status, text):
     if status is None:
         return PageReport(url, host, NO_ANSWER, f"Geen antwoord van de winkel: {_clip(text, 160)}")
     text = text or ""
-    if _looks_blocked(status, text):
+    if looks_blocked(status, text):
         return PageReport(
             url, host, BLOCKED,
             f"De winkel liet de pagina niet lezen (HTTP {status}, waarschijnlijk een bot-controle). "
@@ -331,7 +340,7 @@ def read_page(url, status, text):
     if name is None and scan.meta.get("og:title"):
         name, name_source = _clip(scan.meta["og:title"]), "og:title"
     if name is None and scan.title:
-        name, name_source = _clip(scan.title), "title"
+        name, name_source = _clip(clean_title(scan.title)), "title"
     brand = next((b for b in (_text(node.get("brand")) for node in nodes) if b), None)
     brand = brand or _text(scan.meta.get("product:brand") or scan.meta.get("og:brand"))
     skus = tuple(_unique(_text(node.get("sku") or node.get("productID")) for node in nodes))[:MAX_VALUES]
