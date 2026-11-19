@@ -26,7 +26,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from beslist import Offer, is_undeliverable_text
-from lookup import NOT_FOUND, NO_OFFERS, SOURCE_ERROR, Choose, Failure, Found
+from lookup import NEEDS_EAN, NO_EAN_ON_AMAZON, NOT_FOUND, NO_OFFERS, SOURCE_ERROR, Choose, Failure, Found
 
 SOURCE_NAME = "Google Shopping"
 GOOGLE = "https://www.google.com"
@@ -410,16 +410,24 @@ def serp_source(fetch_json, now=datetime.now, guard=None, hint=None):
 
     `guard(cost)` runs before each search: it returns None to go ahead, or a Dutch reason (for
     instance "monthly budget reached") and then nothing is searched. `hint` is the owner's
-    product name, if he gave one: it ranks the candidates and can settle the choice.
+    product name, if he gave one: it ranks the candidates and can settle the choice. Without an
+    EAN (`ean` is None: an Amazon page that shows none) Google is asked for the owner's name, or
+    else for `page_name`, the product name read from that page; with neither there is nothing
+    to search for and the owner is asked for the EAN.
     """
 
     name = _clip(hint, MAX_QUERY_CHARS) if hint and hint.strip() else None
 
-    def source(ean, steps):
+    def source(ean, steps, page_name=None):
+        rank_hint = hint
+        if not name and ean is None:
+            if not page_name:
+                return Failure(NEEDS_EAN, NO_EAN_ON_AMAZON)
+            rank_hint = page_name
         # With the owner's product name Google is asked for that name: Google does not search
         # on the barcode itself (for one real EAN it gave 40 loosely related products, for
         # another nothing at all), so the name is the more reliable question.
-        query = name
+        query = name or (_clip(page_name, MAX_QUERY_CHARS) if ean is None else None)
         # step 1 plus step 2 of the product that gets picked: the guard looks at both
         reason = guard(2 * SEARCH_COST) if guard else None
         if reason:
@@ -438,9 +446,9 @@ def serp_source(fetch_json, now=datetime.now, guard=None, hint=None):
                 return Failure(SOURCE_ERROR, f"SerpApi meldt: {error}", SOURCE_NAME, query=query)
             return Failure(NOT_FOUND, NOT_FOUND_BY_NAME.format(query) if query else NOT_FOUND_BY_EAN, SOURCE_NAME, query=query)
 
-        ranked = rank(candidates(items), hint)
+        ranked = rank(candidates(items), rank_hint)
         steps.append(f"Google Shopping: {len(items)} resultaten, {len(ranked)} producten")
-        picked = auto_pick(ranked, hint)
+        picked = auto_pick(ranked, rank_hint)
         if picked is not None:
             if len(ranked) > 1:
                 steps.append("Product gekozen op je productnaam")

@@ -188,11 +188,87 @@ def test_amazon_other_failures_ask_for_the_ean():
     assert "Geen antwoord van Amazon (timed out)" in result.message and "Plak de EAN zelf" in result.message
 
 
-def test_amazon_page_without_a_clear_ean_asks_for_the_ean():
-    net = Net({AMAZON_URL: (200, "<html>geen barcode</html>")})
+def amazon_page_without_ean(title="FPD 40 Inch Smart TV, Full HD Google TV with HDR10, Dolby Audio (CG40)"):
+    """The shape of the Amazon page of a seller who gave no GTIN (seen 2026-11-19, B0DJR1RWS3)."""
+    return (
+        f"<html><head><title>{title} : Amazon.nl: Electronics &amp; Photo</title></head><body><table>"
+        "<tr><th>ASIN</th><td>B0DJR1RWS3</td></tr><tr><th>Item model number</th><td>CG40-P3</td></tr>"
+        "</table></body></html>"
+    )
+
+
+class NameSource:
+    """A source that searches on a name: records how it was called."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, ean, steps, page_name=None):
+        self.calls.append((ean, page_name))
+        steps.append("bron: gezocht")
+        return lookup.Found(
+            (Offer("Shop.nl", 20.0, 0.0, "Morgen in huis", True, "https://shop.example/", "Echte titel"),),
+            "Bron", title="Echte titel", query=page_name,
+        )
+
+
+def test_amazon_page_without_an_ean_is_searched_on_its_title_when_the_source_can_do_that():
+    net = Net({AMAZON_URL: (200, amazon_page_without_ean())})
+    source = NameSource()
+    result = net.lookup(AMAZON_URL, source=source)
+    name = "FPD 40 Inch Smart TV, Full HD Google TV with HDR10, Dolby Audio (CG40)"
+    assert source.calls == [(None, name)]
+    assert result.status == lookup.OK and result.ean is None and result.query == name
+    assert lookup.NAME_FROM_AMAZON_NOTE in result.notes  # and says so, with the source's own notes after it
+    assert any("Geen EAN op de Amazon-pagina; productnaam van de pagina" in step for step in result.steps)
+    assert net.calls == [AMAZON_URL]  # one request to Amazon, none to Beslist
+
+
+def test_a_source_that_asks_for_a_choice_also_gets_the_note():
+    net = Net({AMAZON_URL: (200, amazon_page_without_ean())})
+
+    def source(ean, steps, page_name=None):
+        return lookup.Choose(("a", "b"), "Bron", lambda c, s: None, notes=("let op",))
+
+    result = net.lookup(AMAZON_URL, source=source)
+    assert result.status == lookup.CHOOSE and result.ean is None
+    assert result.notes == (lookup.NAME_FROM_AMAZON_NOTE, "let op")
+
+
+def test_beslist_cannot_search_on_a_name_so_the_owner_is_asked_for_the_ean():
+    net = Net({AMAZON_URL: (200, amazon_page_without_ean())})
     result = net.lookup(AMAZON_URL)
     assert result.status == lookup.NEEDS_EAN
-    assert "Geen eenduidige EAN op de Amazon-pagina" in result.message
+    assert "Amazon toont bij dit product geen EAN" in result.message and "Productnaam" in result.message
+    assert net.calls == [AMAZON_URL]
+
+
+def test_an_amazon_page_without_ean_or_usable_title_passes_no_name():
+    net = Net({AMAZON_URL: (200, "<html>geen barcode</html>")})
+    source = NameSource()
+    result = net.lookup(AMAZON_URL, source=source)
+    assert source.calls == [(None, None)]
+    assert any("ook geen bruikbare titel" in step for step in result.steps)
+
+
+@pytest.mark.parametrize("title", ["Amazon.nl", "Sorry! Er is iets misgegaan", "Dyson", "Pagina niet gevonden"])
+def test_titles_that_say_too_little_are_not_used_as_a_name(title):
+    assert lookup._name_from_amazon_page(AMAZON_URL, amazon_page_without_ean(title)) is None
+
+
+def test_the_title_is_cut_at_the_feature_list_and_at_a_word():
+    page = amazon_page_without_ean("Dyson V8 Cyclone Fluffy | Steelstofzuiger met 40 minuten gebruiksduur, HEPA")
+    assert lookup._name_from_amazon_page(AMAZON_URL, page) == "Dyson V8 Cyclone Fluffy"
+    long = " ".join(["woord"] * 60)
+    cut = lookup._name_from_amazon_page(AMAZON_URL, amazon_page_without_ean(long))
+    assert len(cut) <= lookup.MAX_PAGE_NAME_CHARS and cut.endswith("woord")
+
+
+def test_a_blocked_amazon_page_never_gives_a_name():
+    net = Net({AMAZON_URL: (403, "nee")})
+    source = NameSource()
+    result = net.lookup(AMAZON_URL, source=source)
+    assert result.status == lookup.NEEDS_EAN and source.calls == []
 
 
 # ------------------------------------------------------------------ Beslist failures

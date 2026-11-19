@@ -222,6 +222,38 @@ def test_amazon_block_asks_for_the_ean_and_stops(network):
     assert network.calls == [AMAZON_URL]
 
 
+AMAZON_NO_EAN_URL = "https://www.amazon.nl/dp/B0DJR1RWS3"
+
+
+def amazon_page_without_ean():
+    return (
+        "<html><head><title>Kérastase Gloss Absolu shampoo : Amazon.nl: Beauty</title></head>"
+        "<body><table><tr><th>ASIN</th><td>B0DJR1RWS3</td></tr></table></body></html>"
+    )
+
+
+def test_amazon_page_without_an_ean_is_searched_on_its_title(network):
+    network.answers[AMAZON_NO_EAN_URL] = (200, amazon_page_without_ean())
+    at = start(KEY)
+    search(at, AMAZON_NO_EAN_URL)
+    assert not at.exception
+    assert serp_queries(network) == ["Kérastase Gloss Absolu shampoo"]
+    assert SEARCH_URL not in network.calls  # no Beslist
+    caption = texts(at.caption)
+    assert "Zoekterm bij Google: Kérastase Gloss Absolu shampoo" in caption and "Gezocht op EAN" not in caption
+    assert "Amazon toont bij dit product geen EAN" in everything_on_screen(at)
+    show_all(at)
+    assert "Celini.nl" in listed_shops(at)
+
+
+def test_amazon_page_without_an_ean_and_without_a_key_asks_for_the_ean_or_the_name(network):
+    network.answers[AMAZON_NO_EAN_URL] = (200, amazon_page_without_ean())
+    at = start()
+    search(at, AMAZON_NO_EAN_URL)
+    assert "Amazon toont bij dit product geen EAN" in texts(at.warning) and "Productnaam" in texts(at.warning)
+    assert network.calls == [AMAZON_NO_EAN_URL]
+
+
 def test_connection_test_reports_success_and_failure(network):
     at = start()
     at.button(key="ean_conn_test").click().run()

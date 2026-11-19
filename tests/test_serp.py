@@ -453,3 +453,85 @@ def test_nothing_found_for_the_name_asks_for_another_name():
     assert result.status == lookup.NOT_FOUND
     assert "“onzinproduct”" in result.message and "andere naam" in result.message
     assert result.query == "onzinproduct"
+
+
+# ------------------------------------------------------------------ no EAN: the name of an Amazon page
+
+AMAZON_URL = "https://www.amazon.nl/dp/B0DJR1RWS3"
+PAGE_NAME = "Kérastase Gloss Absolu shampoo"
+
+
+def amazon_fetch(title=PAGE_NAME):
+    page = (
+        f"<html><head><title>{title} : Amazon.nl: Beauty</title></head>"
+        "<body><table><tr><th>ASIN</th><td>B0DJR1RWS3</td></tr></table></body></html>"
+    )
+    return lambda url: (200, page)
+
+
+def run_amazon(fake, title=PAGE_NAME, **kwargs):
+    source = serp.serp_source(fake, now=lambda: "NOW", **kwargs)
+    return lookup.lookup(AMAZON_URL, amazon_fetch(title), source=source)
+
+
+def test_without_an_ean_google_is_asked_for_the_name_of_the_amazon_page():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[])
+    result = run_amazon(fake)
+    assert fake.calls[0]["q"] == PAGE_NAME
+    assert result.status == lookup.OK and result.ean is None and result.query == PAGE_NAME
+    assert lookup.NAME_FROM_AMAZON_NOTE in result.notes
+
+
+def test_the_owners_own_name_wins_over_the_name_of_the_page():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[])
+    result = run_amazon(fake, hint="Kérastase masque")
+    assert fake.calls[0]["q"] == "Kérastase masque" and result.query == "Kérastase masque"
+
+
+def test_the_owners_name_is_used_when_the_page_has_no_usable_title():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[])
+    result = run_amazon(fake, title="Amazon.nl", hint="Kérastase masque")
+    assert fake.calls[0]["q"] == "Kérastase masque" and result.status == lookup.OK
+
+
+def test_without_any_name_nothing_is_searched_and_the_owner_is_asked_for_the_ean():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[])
+    result = run_amazon(fake, title="Amazon.nl")
+    assert result.status == lookup.NEEDS_EAN and "Productnaam" in result.message
+    assert fake.calls == []
+
+
+def test_the_name_of_the_page_ranks_the_candidates_and_a_clear_match_is_picked():
+    fake = FakeSerp(
+        shopping=[
+            item("C.nl", 15.0, product_id="222", title=OTHER, token="other"),
+            item("A.nl", 38.0, product_id="111"),
+        ],
+        stores=[],
+    )
+    result = run_amazon(fake)
+    assert result.status == lookup.OK and result.product_title == TITLE
+    assert "Product gekozen op je productnaam" in result.steps
+
+
+def test_several_products_for_the_name_of_the_page_are_a_list_with_the_note():
+    fake = two_products()
+    result = run_amazon(fake, title="Kérastase Gloss")
+    assert result.status == lookup.CHOOSE and result.ean is None
+    assert result.query == "Kérastase Gloss" and lookup.NAME_FROM_AMAZON_NOTE in result.notes
+    chosen = lookup.finish_choice(result, result.candidates[1])
+    assert chosen.status == lookup.OK and chosen.query == "Kérastase Gloss"
+
+
+def test_nothing_found_for_the_name_of_the_page_says_which_name_was_tried():
+    fake = FakeSerp(shopping_error="Google hasn't returned any results for this query.")
+    result = run_amazon(fake)
+    assert result.status == lookup.NOT_FOUND
+    assert f"“{PAGE_NAME}”" in result.message and result.query == PAGE_NAME
+
+
+def test_the_budget_guard_still_counts_both_steps_for_a_search_on_the_page_name():
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[])
+    asked = []
+    result = run_amazon(fake, guard=lambda cost: asked.append(cost))
+    assert asked == [2] and result.status == lookup.OK
