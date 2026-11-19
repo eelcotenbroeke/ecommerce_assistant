@@ -186,6 +186,10 @@ def _offer_block(card):
         if card.member:
             st.caption(f":green[\u2713 {lookup_view.MEMBER_BADGE}]")
         st.caption(card.line)
+        if card.warning:
+            (st.warning if card.excluded else st.caption)(
+                card.warning + (" Telt niet mee in het advies." if card.excluded else "")
+            )
         if card.title:
             st.write(card.title)
         for fact in card.details:
@@ -236,17 +240,20 @@ def _show(result):
     everything = result
     result, hidden = lookup_view.apply_member_filter(result, member_list, only_members)
     typed = st.session_state.get(TYPED_TOTAL_KEY, "")
-    found = lookup_view.verdict_for(result, everything, typed)
+    fits = lookup_view.variant_fits(result)  # shade, colour or code asked for but not in a shop's title
+    result = lookup_view.apply_variant_check(result, fits)
+    found = lookup_view.verdict_for(result, everything, typed, fits)
     warning = lookup_view.variant_warning(result)
     if warning and result.recommendation is not None:
         st.warning(warning)
     if found is not None:
         _show_verdict(found, typed)
-    shown = getattr(st, lookup_view.severity(result))
     headline = lookup_view.headline(result)
-    shown(f"**{headline}**" if headline else result.message)
-    if headline:
-        st.write(lookup_view.explanation(result))
+    if not (headline and lookup_view.headline_is_redundant(found)):
+        shown = getattr(st, lookup_view.severity(result))
+        shown(f"**{headline}**" if headline else result.message)
+        if headline:
+            st.write(lookup_view.explanation(result))
     tip = lookup_view.hint(result)
     if tip:
         st.info(tip)
@@ -256,7 +263,7 @@ def _show(result):
         line = lookup_view.hidden_line(hidden)
         if line:
             st.caption(line)
-    for card in lookup_view.offer_cards(result, member_list):
+    for card in lookup_view.offer_cards(result, member_list, fits):
         _offer_block(card)
     product = lookup_view.product_line(result)
     if product:

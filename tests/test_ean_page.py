@@ -1123,3 +1123,84 @@ def test_a_product_name_with_another_size_is_warned_about_too(network):
     at.text_input(key="ean_hint").set_value("Kérastase Gloss Absolu shampoo 250 ml")
     go_button(at).click().run()
     assert "Let op: je zocht 250 ml" in texts(at.warning)
+
+
+# ------------------------------------------------------------------ the right shade (live case 2026-11-19)
+
+MAYBELLINE_LINK = "https://www.kruidvat.nl/maybelline-new-york-sculpting-stix-011-rosy-sculpt-2-in-1-eyeliner/p/6428063"
+MAYBELLINE = "Maybelline Sculpting Stix Eyeliner"
+AMAZON_BLACK_BLUR = (
+    "Maybelline New York Sculpting Stix 2-in-1 eyeliner, gemakkelijk mengbare looks, tot 24 uur houvast "
+    "dankzij contourkleur, kleur: Black Blur"
+)
+
+
+def maybelline(network, *stores):
+    network.serp_answers["google_shopping"] = (
+        200,
+        json.dumps({"shopping_results": [item("Kruidvat.nl", 10.99, title=MAYBELLINE)]}),
+    )
+    network.serp_answers["google_immersive_product"] = (
+        200,
+        json.dumps({"product_results": {"stores": list(stores)}}),
+    )
+
+
+def search_maybelline(at):
+    at.text_input(key="ean_text").set_value(MAYBELLINE_LINK)
+    at.text_input(key="ean_hint").set_value("Maybelline Sculpting Stix eyeliner")
+    return go_button(at).click().run()
+
+
+def test_another_shade_is_marked_and_never_the_advice(network):
+    maybelline(
+        network,
+        store("Kruidvat.nl", 10.99, title="Maybelline New York Sculpting Stix 011 Rosy Sculpt", shipping_extracted=0.0),
+        store("Amazon.nl - Retail", 6.38, title=AMAZON_BLACK_BLUR, shipping="Free", link="https://www.amazon.nl/dp/B0DT5GMLV5"),
+    )
+    at = start(KEY)
+    search_maybelline(at)
+    assert not at.exception
+    # Amazon is cheaper but it is the Black Blur shade: it is shown, marked, and not the advice
+    assert "Je zit al goed: Kruidvat.nl is de goedkoopste optie die we vonden" in texts(at.success)
+    assert "Goedkoper elders" not in texts(at.warning) + texts(at.info)
+    assert "Andere variant: kleur Black Blur. Telt niet mee in het advies." in texts(at.warning)
+    assert listed_shops(at) == ["Kruidvat.nl", "Amazon.nl - Retail"]  # the other shade goes last
+
+
+def test_a_cheaper_shop_that_does_not_name_the_shade_is_a_maybe(network):
+    maybelline(
+        network,
+        store("Kruidvat.nl", 10.99, title="Maybelline New York Sculpting Stix 011 Rosy Sculpt", shipping_extracted=0.0),
+        store("Etos", 8.0, title="Maybelline Sculpting Stix Eyeliner", shipping_extracted=0.0),
+    )
+    at = start(KEY)
+    search_maybelline(at)
+    assert not at.exception
+    assert "Mogelijk goedkoper elders: bespaar € 2,99 (27,2%) bij Etos" in texts(at.info)
+    assert "Variant niet bevestigd: de titel noemt 011 niet." in texts(at.markdown)
+    assert "Controleer dat voordat je gelooft dat het goedkoper is." in texts(at.markdown)
+
+
+def test_a_cheaper_shop_with_the_same_shade_is_a_saving(network):
+    maybelline(
+        network,
+        store("Kruidvat.nl", 10.99, title="Maybelline New York Sculpting Stix 011 Rosy Sculpt", shipping_extracted=0.0),
+        store("Etos", 8.0, title="Maybelline Sculpting Stix 011 Rosy Sculpt", shipping_extracted=0.0),
+    )
+    at = start(KEY)
+    search_maybelline(at)
+    assert "Goedkoper elders: bespaar € 2,99 (27,2%) bij Etos" in texts(at.warning)
+    assert "bevestigd" not in texts(at.markdown)
+
+
+def test_the_verdict_and_the_headline_box_do_not_say_the_same_twice(network):
+    maybelline(
+        network,
+        store("Kruidvat.nl", 10.99, title="Maybelline New York Sculpting Stix 011 Rosy Sculpt", shipping_extracted=0.0),
+        store("Etos", 8.0, title="Maybelline Sculpting Stix 011 Rosy Sculpt", shipping_extracted=0.0),
+    )
+    at = start(KEY)
+    search_maybelline(at)
+    assert not at.success  # no second green box for Etos: the verdict says it
+    assert "De goedkoopste leverbare optie, inclusief verzending." not in texts(at.markdown)
