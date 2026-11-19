@@ -73,6 +73,7 @@ def _parents(host):
 class MemberList:
     domains: frozenset = frozenset()
     names: dict = field(default_factory=dict)  # squashed name -> member domain
+    categories: dict = field(default_factory=dict)  # member domain -> category codes (categories.py)
 
     def __len__(self):
         return len(self.domains)
@@ -95,15 +96,26 @@ class MemberList:
     def is_member(self, shop=None, url=None):
         return self.match(shop, url) is not None
 
+    def categories_of(self, shop=None, url=None):
+        """The category codes of this shop, or () when it is not a member."""
+        return self.categories.get(self.match(shop, url), ())
+
+    def in_category(self, code):
+        """The member domains that have this category."""
+        return frozenset(d for d, codes in self.categories.items() if code in codes)
+
 
 def build(rows):
-    """A MemberList from (slug, domain) pairs."""
-    domains, names = set(), {}
-    for slug, domain in rows:
+    """A MemberList from (slug, domain) or (slug, domain, "cat1|cat2") rows."""
+    domains, names, categories = set(), {}, {}
+    for slug, domain, *rest in rows:
         domain = _clean_host(domain)
         if not domain:
             continue
         domains.add(domain)
+        codes = tuple(code for code in (rest[0] or "").split("|") if code) if rest else ()
+        if codes and domain not in categories:
+            categories[domain] = codes
         label = domain.split(".")[0]
         for text in (label, _LEGAL_TAIL_RE.sub("", (slug or "").strip().lower())):
             key = squash(text)
@@ -112,12 +124,15 @@ def build(rows):
     for key, domain in ALIASES.items():
         if domain in domains:
             names[key] = domain
-    return MemberList(frozenset(domains), names)
+    return MemberList(frozenset(domains), names, categories)
 
 
 @lru_cache(maxsize=1)
 def load(path=LIST_PATH):
     """The member list from the CSV (cached: one read per process)."""
     with open(path, encoding="utf-8-sig", newline="") as handle:
-        rows = [(row.get("webshop_slug"), row.get("domain")) for row in csv.DictReader(handle)]
+        rows = [
+            (row.get("webshop_slug"), row.get("domain"), row.get("categorie"))
+            for row in csv.DictReader(handle)
+        ]
     return build(rows)
