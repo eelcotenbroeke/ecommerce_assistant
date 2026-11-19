@@ -266,3 +266,91 @@ def test_the_cards_mark_the_members():
     assert cards == {"Celini.nl": False, "Kruidvat.nl": True}
     assert {c.member for c in view.offer_cards(res)} == {False}  # no list: nothing is claimed
     assert view.MEMBER_BADGE == "Thuiswinkel Waarborg"
+
+
+# ------------------------------------------------------------------ the variant that was asked for
+
+LINK = "https://www.kruidvat.nl/maybelline-new-york-sculpting-stix-011-rosy-sculpt-2-in-1-eyeliner/p/6428063"
+
+
+def titled(shop, price, title, shipping=0.0):
+    return Offer(shop, price, shipping, None, True, None, title)
+
+
+def maybelline_result(*offers):
+    return result(
+        offers=list(offers), product_title="Maybelline Sculpting Stix Eyeliner",
+        query="Maybelline Sculpting Stix eyeliner", reference_link=LINK,
+    )
+
+
+def test_what_was_asked_for_is_the_search_term_and_the_words_of_the_link():
+    res = maybelline_result(titled("A.nl", 10.0, "x"))
+    texts = view.wanted_texts(res)
+    assert texts[0] == "Maybelline Sculpting Stix eyeliner" and "011 rosy sculpt" in texts[1]
+    assert view.wanted_texts(result()) == []
+
+
+def test_only_offers_that_are_not_ok_get_a_fit():
+    res = maybelline_result(
+        titled("Kruidvat.nl", 10.99, "Maybelline Sculpting Stix 011 Rosy Sculpt"),
+        titled("Amazon.nl", 6.38, "Maybelline Sculpting Stix, kleur: Black Blur"),
+        titled("Etos", 8.0, "Maybelline Sculpting Stix Eyeliner"),
+    )
+    fits = view.variant_fits(res)
+    states = {key[0]: fit.state for key, fit in fits.items()}
+    assert states == {"Amazon.nl": "differs", "Etos": "unconfirmed"}
+    assert view.variant_fits(result(offers=[offer("A.nl", 10.0)])) == {}  # nothing asked for
+
+
+def test_an_offer_of_another_variant_is_never_the_recommendation():
+    res = maybelline_result(
+        titled("Kruidvat.nl", 10.99, "Maybelline Sculpting Stix 011 Rosy Sculpt"),
+        titled("Amazon.nl", 6.38, "Maybelline Sculpting Stix, kleur: Black Blur"),
+    )
+    assert res.recommendation.pick.shop == "Amazon.nl"
+    checked = view.apply_variant_check(res, view.variant_fits(res))
+    assert checked.recommendation.pick.shop == "Kruidvat.nl"
+    assert [o.shop for o in checked.offers] == ["Kruidvat.nl", "Amazon.nl"]  # still listed
+    cards = view.offer_cards(checked, None, view.variant_fits(res))
+    assert [c.shop for c in cards] == ["Kruidvat.nl", "Amazon.nl"]
+    assert cards[1].excluded and cards[1].warning == "Andere variant: kleur Black Blur."
+    assert not cards[0].excluded and cards[0].warning is None
+
+
+def test_when_every_offer_is_another_variant_the_result_is_left_as_it_was():
+    res = maybelline_result(titled("Amazon.nl", 6.38, "Maybelline Sculpting Stix, kleur: Black Blur"))
+    assert view.apply_variant_check(res, view.variant_fits(res)) is res
+
+
+def test_an_unconfirmed_cheapest_offer_makes_the_saving_a_maybe():
+    res = maybelline_result(
+        titled("Kruidvat.nl", 10.99, "Maybelline Sculpting Stix 011 Rosy Sculpt"),
+        titled("Etos", 8.0, "Maybelline Sculpting Stix Eyeliner"),
+    )
+    found = view.verdict_for(res, res, "", view.variant_fits(res))
+    assert found.kind == "cheaper" and found.caution == "Variant niet bevestigd: de titel noemt 011 niet."
+    assert view.verdict_headline(found) == "Mogelijk goedkoper elders: bespaar € 2,99 (27,2%) bij Etos"
+    assert view.verdict_severity(found) == "info"
+    assert "Controleer dat voordat je gelooft dat het goedkoper is." in view.verdict_detail(found)
+
+
+def test_a_confirmed_saving_has_no_caution():
+    res = maybelline_result(
+        titled("Kruidvat.nl", 10.99, "Maybelline Sculpting Stix 011 Rosy Sculpt"),
+        titled("Etos", 8.0, "Maybelline Sculpting Stix 011 Rosy Sculpt"),
+    )
+    found = view.verdict_for(res, res, "", view.variant_fits(res))
+    assert found.caution is None and view.verdict_severity(found) == "warning"
+
+
+def test_the_headline_box_is_redundant_only_when_the_verdict_names_the_same_shop():
+    res = maybelline_result(
+        titled("Kruidvat.nl", 10.99, "Maybelline Sculpting Stix 011 Rosy Sculpt"),
+        titled("Etos", 8.0, "Maybelline Sculpting Stix 011 Rosy Sculpt"),
+    )
+    found = view.verdict_for(res, res)
+    assert view.headline_is_redundant(found)
+    assert not view.headline_is_redundant(None)
+    preferred = result(offers=[offer("Kruidvat.nl", 45.0), offer("Etos", 40.0), offer("bol.com", 42.0)], reference_link="https://www.kruidvat.nl/p/shampoo-test/1")
+    assert not view.headline_is_redundant(view.verdict_for(preferred, preferred))  # the pick is bol, not the cheapest

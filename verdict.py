@@ -90,6 +90,7 @@ class Verdict:
     pick_shop: str | None = None  # the app's recommendation (a preferred shop may be a bit dearer)
     pick_total: float | None = None
     saving: float = 0.0  # EUR the cheapest offer is below the reference (0 unless CHEAPER)
+    caution: str | None = None  # why the saving is not certain (the cheapest offer's variant is unconfirmed)
 
     @property
     def saving_pct(self):

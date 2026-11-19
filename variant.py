@@ -89,3 +89,83 @@ def mismatch(wanted, found):
             "Controleer of dit het product is dat je bedoelt."
         )
     return None
+
+
+# --------------------------------------------------------------------------- shade, colour, code
+
+OK = "ok"  # nothing to check, or the title holds what was asked for
+UNCONFIRMED = "unconfirmed"  # the title does not say the variant that was asked for
+DIFFERS = "differs"  # the title names another variant ("kleur: Black Blur" when 011 was asked for)
+
+# Dutch colour words and their English twins: one canonical word per colour, so that "zwart" in a
+# link and "kleur: Black" in a shop's title count as the same.
+_COLOURS = {
+    "zwart": "black", "wit": "white", "rood": "red", "blauw": "blue", "groen": "green", "geel": "yellow",
+    "roze": "pink", "paars": "purple", "oranje": "orange", "grijs": "grey", "gray": "grey", "bruin": "brown",
+    "goud": "gold", "zilver": "silver", "beige": "beige", "nude": "nude", "navy": "navy",
+    "black": "black", "white": "white", "red": "red", "blue": "blue", "green": "green", "yellow": "yellow",
+    "pink": "pink", "purple": "purple", "orange": "orange", "grey": "grey", "brown": "brown",
+    "gold": "gold", "silver": "silver",
+}
+_CODE_RE = re.compile(r"\d{2,5}")
+_ATTRIBUTE_RE = re.compile(
+    r"\b(kleur|colou?r|shade|tint|nuance|maat|size)\s*:\s*([^,|;()\n]+)", re.IGNORECASE
+)
+_ATTRIBUTE_LABEL = {"kleur": "kleur", "color": "kleur", "colour": "kleur", "shade": "kleur", "tint": "kleur",
+                    "nuance": "kleur", "maat": "maat", "size": "maat"}
+
+
+_DUTCH = {"black": "zwart", "white": "wit", "red": "rood", "blue": "blauw", "green": "groen", "yellow": "geel",
+          "pink": "roze", "purple": "paars", "orange": "oranje", "grey": "grijs", "brown": "bruin", "gold": "goud",
+          "silver": "zilver"}
+
+
+@dataclass(frozen=True)
+class Fit:
+    state: str  # OK, UNCONFIRMED or DIFFERS
+    note: str | None = None  # Dutch, for the offer block
+
+
+def _tokens(text):
+    plain = unicodedata.normalize("NFKD", _plain(text)).encode("ascii", "ignore").decode().lower()
+    return [_COLOURS.get(token, token) for token in re.findall(r"[a-z0-9]+", plain)]
+
+
+def requirements(wanted_texts, product_title):
+    """The variant words the person asked for that the found product's title does not hold: a code
+    ("011", the shade number of a lipstick or the model number of a box) or a colour. Sizes and
+    pack counts are left to `mismatch`; words that the found title has are not a requirement."""
+    have = set(_tokens(product_title))
+    need = []
+    for text in wanted_texts:
+        for token in _tokens(_SIZE_RE.sub(" ", _plain(text))):
+            if token not in have and token not in need and (_CODE_RE.fullmatch(token) or token in _COLOURS.values()):
+                need.append(token)
+    return tuple(need)
+
+
+def check(wanted_texts, product_title, offer_title):
+    """Is this shop's own title the variant that was asked for?
+
+    Nothing is asked for (no code or colour beyond the found title): OK. The title names a colour or
+    size with a label ("kleur: Black Blur") that shares no word with what was asked for: DIFFERS.
+    Otherwise OK when the title holds every required word, UNCONFIRMED when it does not. A DIFFERS
+    offer is a different product and does not count towards a saving; an UNCONFIRMED one may be
+    the same product that the shop describes more briefly, so it counts but is marked.
+    """
+    need = requirements(wanted_texts, product_title)
+    if not need:
+        return Fit(OK)
+    if not offer_title:
+        return Fit(UNCONFIRMED, "Variant niet bevestigd: deze winkel geeft geen titel.")
+    wanted = {token for text in wanted_texts for token in _tokens(text)}
+    for label, value in _ATTRIBUTE_RE.findall(offer_title):
+        words = set(_tokens(value))
+        if words and not words & wanted:
+            return Fit(DIFFERS, f"Andere variant: {_ATTRIBUTE_LABEL[label.lower()]} {value.strip()}.")
+    have = set(_tokens(offer_title))
+    missing = [token for token in need if token not in have]
+    if not missing:
+        return Fit(OK)
+    said = ", ".join(_DUTCH.get(token, token) for token in missing)
+    return Fit(UNCONFIRMED, f"Variant niet bevestigd: de titel noemt {said} niet.")

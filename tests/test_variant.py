@@ -70,3 +70,53 @@ def test_a_multipack_asked_for_and_a_single_item_found():
 def test_a_single_item_asked_for_is_never_a_mismatch_on_count():
     assert variant.mismatch("bjorn borg boxershort", "Bjorn Borg Boxershort 3-pack") is None
     assert variant.mismatch("slip 1x", "slip 3-pack") is None
+
+
+# ------------------------------------------------------------------ shade, colour and code
+
+WANTED = ["Maybelline Sculpting Stix eyeliner", "maybelline new york sculpting stix 011 rosy sculpt 2 in 1 eyeliner"]
+GENERIC = "Maybelline Sculpting Stix Eyeliner"
+AMAZON = (
+    "Maybelline New York Sculpting Stix 2-in-1 eyeliner, gemakkelijk mengbare looks, tot 24 uur houvast "
+    "dankzij contourkleur, kleur: Black Blur"
+)
+
+
+def test_a_shade_code_in_the_link_that_the_found_title_lacks_is_a_requirement():
+    assert variant.requirements(WANTED, GENERIC) == ("011",)
+    assert variant.requirements(["lego classic 10696"], "10696 LEGO Classic") == ()  # the title has it
+    assert variant.requirements(["weleda shampoo 400 ml"], "Weleda shampoo") == ()  # sizes are mismatch's job
+    assert variant.requirements(["jas zwart"], "Jas") == ("black",)  # Dutch colour, canonical word
+    assert variant.requirements(["magimix keukenmachine"], "Magimix keukenmachine") == ()
+
+
+def test_another_colour_with_a_label_is_a_different_variant():
+    fit = variant.check(WANTED, GENERIC, AMAZON)
+    assert fit.state == variant.DIFFERS and fit.note == "Andere variant: kleur Black Blur."
+
+
+def test_the_variant_that_was_asked_for_is_fine():
+    assert variant.check(WANTED, GENERIC, "Maybelline New York Sculpting Stix 011 Rosy Sculpt").state == variant.OK
+    assert variant.check(WANTED, GENERIC, "Sculpting Stix eyeliner - kleur: Rosy Sculpt 011").state == variant.OK
+
+
+def test_a_title_that_does_not_say_the_variant_is_unconfirmed_not_wrong():
+    fit = variant.check(WANTED, GENERIC, "Maybelline Sculpting Stix Eyeliner")
+    assert fit.state == variant.UNCONFIRMED and fit.note == "Variant niet bevestigd: de titel noemt 011 niet."
+    assert variant.check(WANTED, GENERIC, None).state == variant.UNCONFIRMED
+
+
+def test_nothing_asked_for_means_nothing_to_check():
+    assert variant.check(["maybelline sculpting stix eyeliner"], GENERIC, AMAZON).state == variant.OK
+
+
+def test_dutch_and_english_colours_are_the_same_colour():
+    assert variant.check(["shirt zwart"], "Shirt", "Shirt - kleur: Black").state == variant.OK
+    assert variant.check(["shirt black"], "Shirt", "Shirt - kleur: Zwart").state == variant.OK
+    assert variant.check(["shirt zwart"], "Shirt", "Shirt - kleur: Wit").state == variant.DIFFERS
+    assert variant.check(["shirt zwart"], "Shirt", "Shirt rood").note == "Variant niet bevestigd: de titel noemt zwart niet."
+
+
+def test_another_size_with_a_label_is_a_different_variant_when_a_variant_was_asked_for():
+    fit = variant.check(["jas zwart"], "Jas", "Jas, maat: XL")
+    assert fit.state == variant.DIFFERS and fit.note == "Andere variant: maat XL."

@@ -78,7 +78,43 @@ def variant_warning(result):
     return None
 
 
-def verdict_for(shown, everything=None, typed=""):
+def _fit_key(offer):
+    """An offer and its effective copy (free delivery applied) share this key."""
+    return (offer.shop, offer.price, offer.title)
+
+
+def wanted_texts(result):
+    """What the person asked for: the search term and the words of the link he pasted."""
+    texts = [result.query] if result.query else []
+    link = getattr(result, "reference_link", None)
+    if link:
+        texts.append(name_from_link(link))
+    return [text for text in texts if text]
+
+
+def variant_fits(result):
+    """{offer key: variant.Fit} for the offers of a result: is each shop's own title the variant
+    (shade, colour, code) that was asked for? Empty when nothing like that was asked for."""
+    texts = wanted_texts(result)
+    if not texts or not result.offers:
+        return {}
+    fits = {_fit_key(offer): variant.check(texts, result.product_title, offer.title) for offer in result.offers}
+    return {key: fit for key, fit in fits.items() if fit.state != variant.OK}
+
+
+def apply_variant_check(result, fits):
+    """The result with its recommendation made again without the offers of another variant. They
+    stay in the list (marked), but they are not what the person asked for, so they never are the
+    advice. When nothing else is left the result is returned as it was."""
+    wrong = {key for key, fit in fits.items() if fit.state == variant.DIFFERS}
+    if not wrong or result.recommendation is None:
+        return result
+    kept = tuple(offer for offer in result.offers if _fit_key(offer) not in wrong)
+    advice = recommend(kept)
+    return result if advice is None else replace(result, recommendation=advice)
+
+
+def verdict_for(shown, everything=None, typed="", fits=None):
     """The verdict for what the screen shows: the link's shop against the recommended offer.
 
     `shown` is the result after the member filter (its recommendation is the pick); `everything`
@@ -89,9 +125,19 @@ def verdict_for(shown, everything=None, typed=""):
     link = getattr(everything, "reference_link", None)
     if not link or shown.recommendation is None:
         return None
-    return verdicts.verdict(
+    found = verdicts.verdict(
         link, everything.offers, shown.recommendation, typed_total=verdicts.parse_total(typed)
     )
+    if found is not None and found.kind == verdicts.CHEAPER and fits:
+        fit = fits.get(_fit_key(shown.recommendation.cheapest))
+        if fit is not None and fit.state == variant.UNCONFIRMED:
+            found = replace(found, caution=fit.note)
+    return found
+
+
+def headline_is_redundant(found):
+    """True when the verdict already names the shop that the headline box would name."""
+    return found is not None and found.kind in (verdicts.CHEAPER, verdicts.BEST) and found.pick_shop == found.best_shop
 
 
 VERDICT_ASK = "Wat zie je als totaalprijs op de pagina (met verzending)?"
@@ -100,6 +146,8 @@ VERDICT_BAD_TOTAL = "Dat lees ik niet als bedrag; vul bijvoorbeeld 13,99 in."
 
 def verdict_severity(found):
     """'success', 'warning' or 'info' for a Verdict."""
+    if found.kind == verdicts.CHEAPER and found.caution:
+        return "info"
     return {verdicts.BEST: "success", verdicts.CHEAPER: "warning", verdicts.GONE: "warning"}.get(
         found.kind, "info"
     )
@@ -107,10 +155,8 @@ def verdict_severity(found):
 
 def verdict_headline(found):
     if found.kind == verdicts.CHEAPER:
-        return (
-            f"Goedkoper elders: bespaar {eur(found.saving)} ({_pct(found.saving_pct)}) "
-            f"bij {found.best_shop}"
-        )
+        label = "Mogelijk goedkoper elders" if found.caution else "Goedkoper elders"
+        return f"{label}: bespaar {eur(found.saving)} ({_pct(found.saving_pct)}) bij {found.best_shop}"
     if found.kind == verdicts.BEST:
         return f"Je zit al goed: {found.shop} is de goedkoopste optie die we vonden"
     if found.kind == verdicts.GONE:
@@ -140,6 +186,8 @@ def verdict_detail(found):
             f"Vul de totaalprijs in die je ziet, dan vergelijk ik die met de goedkoopste optie, "
             f"{found.best_shop} ({eur(found.best_total)})."
         )
+    if found.caution:
+        text += f" {found.caution} Controleer dat voordat je gelooft dat het goedkoper is."
     if found.reference_total is not None and not found.shipping_known:
         text += f" De verzendkosten bij {found.shop} zijn onbekend: het kan duurder uitvallen."
     return text
@@ -212,6 +260,8 @@ class OfferCard:
     url: str | None  # link to the shop (http/https only)
     deliverable: bool
     member: bool = False  # on the Thuiswinkel Waarborg member list
+    warning: str | None = None  # the variant is not the one asked for, or not confirmed
+    excluded: bool = False  # another variant: not part of the advice
 
 
 def _same_text(a, b):
@@ -272,17 +322,26 @@ def hidden_line(hidden):
     )
 
 
-def offer_cards(result, member_list=None):
+def offer_cards(result, member_list=None, fits=None):
     """One OfferCard per offer: the recommended one first, then deliverable ones cheapest first,
     then the ones that cannot be had."""
     advice = result.recommendation
     pick_shop = advice.pick.shop if advice is not None else None
+    fits = fits or {}
+
+    def is_wrong(offer):
+        fit = fits.get(_fit_key(offer))
+        return fit is not None and fit.state == variant.DIFFERS
+
     ordered = sorted(
         result.offers,
-        key=lambda offer: (offer.shop != pick_shop, not offer.deliverable, effective_offer(offer).total),
+        key=lambda offer: (
+            offer.shop != pick_shop, is_wrong(offer), not offer.deliverable, effective_offer(offer).total,
+        ),
     )
     cards = []
     for offer in ordered:
+        fit = fits.get(_fit_key(offer))
         shown = effective_offer(offer)
         total = eur(shown.total) if shown.shipping is not None else eur(shown.total) + " + verzending?"
         is_pick = advice is not None and offer.shop == advice.pick.shop
@@ -305,6 +364,8 @@ def offer_cards(result, member_list=None):
                 url=_web_link(offer.url),
                 deliverable=offer.deliverable,
                 member=member_list is not None and member_list.is_member(offer.shop, offer.url),
+                warning=fit.note if fit is not None else None,
+                excluded=fit is not None and fit.state == variant.DIFFERS,
             )
         )
     return cards
