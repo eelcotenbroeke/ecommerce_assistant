@@ -1031,3 +1031,68 @@ def test_a_link_without_a_name_in_its_words_says_what_to_do(network):
 
 
 BOL_LINK = "https://www.bol.com/nl/nl/p/kerastase-gloss-absolu-shampoo/9300000012345678/"
+
+
+# ------------------------------------------------------------------ buy here or elsewhere?
+
+CELINI_LINK = "https://www.celini.nl/kerastase-gloss-absolu-shampoo/p/123"
+KRUIDVAT_LINK = "https://www.kruidvat.nl/kerastase-gloss-absolu-shampoo/p/456"
+
+
+def test_a_link_gets_a_verdict_against_the_shop_it_comes_from(network):
+    at = start(KEY)
+    search(at, CELINI_LINK)
+    assert not at.exception
+    show_all(at)
+    # Celini costs 35,28 + 3,95 = 39,23; Flaconi is cheapest with 38,63; bol (40,00) is the owner's pick
+    assert "Goedkoper elders: bespaar € 0,60 (1,5%) bij Flaconi.nl" in texts(at.warning)
+    assert "Flaconi.nl: € 38,63 in totaal, tegen € 39,23 bij Celini.nl." in texts(at.markdown)
+    assert len(serp_calls(network)) == 2  # the verdict is a view: no extra search
+
+
+def test_the_link_shop_being_cheapest_is_said_so(network):
+    at = start(KEY)
+    search(at, "https://www.flaconi.nl/kerastase-gloss-absolu-shampoo/p/1")
+    show_all(at)
+    assert "Je zit al goed: Flaconi.nl is de goedkoopste optie die we vonden" in texts(at.success)
+
+
+def test_a_shop_that_is_not_in_the_list_asks_for_the_total_and_compares_it(network):
+    at = start(KEY)
+    search(at, KRUIDVAT_LINK)
+    assert "kruidvat.nl staat niet in de lijst" in texts(at.info)
+    typed = at.text_input(key="ean_typed_total")
+    assert typed.label == "Wat zie je als totaalprijs op de pagina (met verzending)?"
+    typed.set_value("45,00").run()
+    # members only (default): bol (40,00) is the only shop shown, so it is the cheapest shown
+    assert "Goedkoper elders: bespaar € 5,00 (11,1%) bij bol.com" in texts(at.warning)
+    assert "€ 40,00 in totaal, tegen € 45,00 bij jouw prijs." in texts(at.markdown)
+    assert len(serp_calls(network)) == 2  # still no new search
+    at.text_input(key="ean_typed_total").set_value("38,00").run()
+    assert "Je zit al goed: kruidvat.nl is de goedkoopste optie die we vonden" in texts(at.success)
+
+
+def test_a_total_that_is_not_a_number_is_said_so_and_changes_nothing(network):
+    at = start(KEY)
+    search(at, KRUIDVAT_LINK)
+    at.text_input(key="ean_typed_total").set_value("veel").run()
+    assert "Dat lees ik niet als bedrag" in texts(at.caption)
+    assert "kruidvat.nl staat niet in de lijst" in texts(at.info)
+
+
+def test_a_typed_total_is_forgotten_with_the_next_search(network):
+    at = start(KEY)
+    search(at, KRUIDVAT_LINK)
+    at.text_input(key="ean_typed_total").set_value("45,00").run()
+    search(at, CELINI_LINK)
+    assert not at.exception
+    assert "bij jouw prijs" not in texts(at.markdown)
+
+
+def test_a_barcode_has_no_verdict_and_no_price_field(network):
+    at = start(KEY)
+    search(at)
+    assert not at.exception
+    assert not [m for m in at.markdown if "Goedkoper elders" in m.value or "Je zit al goed" in m.value]
+    assert "Je zit al goed" not in texts(at.success) and "Goedkoper elders" not in texts(at.warning)
+    assert not any(t.key == "ean_typed_total" for t in at.text_input)
