@@ -8,6 +8,7 @@ from streamlit.testing.v1 import AppTest
 import fetching
 import lookup
 import ean_page
+import pageprobe
 from beslist_pages import EAN, PRODUCT_URL, SEARCH_PAGE, SEARCH_URL, product_page
 from serp_pages import TITLE, item, store
 
@@ -133,7 +134,7 @@ def test_phone_screen_is_the_default_and_makes_no_request(network):
     at = start()
     assert not at.exception
     assert [t.value for t in at.title] == ["\U0001f3af Prijscheck via EAN"]
-    assert [b.label for b in at.button] == ["Zoek beste aanbieding", "Test verbinding met Beslist"]
+    assert [b.label for b in at.button] == ["Zoek beste aanbieding", "Test verbinding met Beslist", "Test pagina's"]
     assert network.calls == []
 
 
@@ -216,14 +217,14 @@ def everything_on_screen(at):
 def test_without_a_key_the_screen_says_so_and_uses_beslist(network):
     at = start()
     assert "SERPAPI_KEY" in texts(at.warning)
-    assert [b.label for b in at.button] == ["Zoek beste aanbieding", "Test verbinding met Beslist"]
+    assert [b.label for b in at.button] == ["Zoek beste aanbieding", "Test verbinding met Beslist", "Test pagina's"]
 
 
 def test_with_a_key_the_offers_come_from_google_shopping(network):
     at = start(KEY)
     assert not at.exception
     assert not at.warning
-    assert [b.label for b in at.button] == ["Zoek beste aanbieding", "Test SerpApi"]
+    assert [b.label for b in at.button] == ["Zoek beste aanbieding", "Test SerpApi", "Test pagina's"]
     assert serp_calls(network) == []
     assert "SerpApi deze maand: 12 van 100 gebruikt, nog 88 over" in texts(at.caption)
     search(at)
@@ -608,3 +609,61 @@ def test_an_empty_answer_for_the_ean_points_to_the_product_name_field(network):
     search(at)
     assert serp_queries(network) == [EAN, "Kérastase Gloss Absolu"]
     assert "Celini.nl" in listed_shops(at)
+
+
+# ------------------------------------------------------------------ test of shop pages (no SerpApi)
+
+PAGE_OK = (
+    '<html><head><title>Sony koptelefoon</title><script type="application/ld+json">'
+    + json.dumps({"@type": "Product", "name": "Sony WH-1000XM5", "brand": "Sony", "mpn": "WH1000XM5B", "gtin13": EAN})
+    + "</script></head><body></body></html>"
+)
+
+
+def probe_links(at, text):
+    at.text_area(key="probe_links").set_value(text)
+    return next(b for b in at.button if b.label == "Test pagina's").click().run()
+
+
+def test_the_page_probe_reports_readable_and_blocked_shops_and_uses_no_searches(network):
+    network.answers["https://www.coolblue.nl/product/1/x.html"] = (200, PAGE_OK)
+    network.answers["https://www.zalando.nl/nike-air.html"] = (403, "Forbidden")
+    at = start(KEY)
+    probe_links(at, "https://www.coolblue.nl/product/1/x.html\nhttps://www.zalando.nl/nike-air.html")
+    assert not at.exception
+    assert serp_calls(network) == []
+    assert network.calls[-2:] == ["https://www.coolblue.nl/product/1/x.html", "https://www.zalando.nl/nike-air.html"]
+    assert "Pagina gelezen. Gevonden: EAN, MPN, merk, naam" in texts(at.success)
+    assert "niet omzeild" in texts(at.error) and "HTTP 403" in texts(at.error)
+    captions = texts(at.caption)
+    assert f"EAN {EAN} (uit json-ld)" in captions and "MPN (fabrikantcode): WH1000XM5B" in captions
+    assert "Bruikbaar voor: EAN, merk + MPN, productnaam" in captions
+    assert "**www.coolblue.nl** \u00b7 Leesbaar" in texts(at.markdown)
+    assert "**www.zalando.nl** \u00b7 Geweigerd door de winkel" in texts(at.markdown)
+    assert "Download paginagegevens (JSON)" in [b.label for b in at.get("download_button")]
+
+
+def test_the_page_probe_names_lines_that_are_not_links(network):
+    network.answers["https://www.wehkamp.nl/p/1/"] = (200, PAGE_OK)
+    at = start()
+    probe_links(at, "shampoo\n\nhttps://www.wehkamp.nl/p/1/\nhttp://localhost/x")
+    assert "Regel 1: Dit lijkt geen link." in texts(at.warning)
+    assert "Regel 4:" in texts(at.warning)
+    assert network.calls == ["https://www.wehkamp.nl/p/1/"]
+
+
+def test_the_page_probe_download_holds_findings_but_not_the_page(network):
+    network.answers["https://www.coolblue.nl/product/1/x.html"] = (200, PAGE_OK.replace("</body>", "SECRET-BODY</body>"))
+    at = start()
+    probe_links(at, "https://www.coolblue.nl/product/1/x.html")
+    data = pageprobe.download_data(at.session_state["probe_reports"])
+    assert data[0]["gevonden"]["ean"] == EAN
+    assert "SECRET-BODY" not in json.dumps(data)
+
+
+def test_an_empty_probe_does_nothing(network):
+    at = start()
+    probe_links(at, "   ")
+    assert not at.exception
+    assert network.calls == []
+    assert not at.get("download_button")

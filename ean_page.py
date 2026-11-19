@@ -22,6 +22,7 @@ import budget
 import fetching
 import lookup
 import lookup_view
+import probe_page
 import serp
 
 CACHE_SECONDS = 15 * 60
@@ -328,6 +329,8 @@ def render():
             label = "Test verbinding met Beslist"
         if st.button(label, key="ean_conn_test"):
             _connection_test(using_serp)
+    with st.expander("Test winkelpagina's"):
+        probe_page.render()
 
     if using_serp:  # after the test, so the numbers and the download include its calls
         calls = st.session_state.get("serp_calls", 0)
