@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 DEFAULT_LIMIT = 250  # the owner raised it from 100 on 2026-11-18, after the first live check
-LOOKUP_COST = 2  # google_shopping + google_immersive_product
+LOOKUP_COST = 2  # a whole lookup: google_shopping + google_immersive_product (one search each)
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,7 @@ def check(account, limit=DEFAULT_LIMIT, cost=LOOKUP_COST):
     if account.used + cost > limit:
         return (
             f"Maandbudget bereikt: {account.used} van {limit} SerpApi-zoekopdrachten gebruikt en "
-            f"een prijscheck kost er {cost}. Er is niets opgehaald. Wil je meer toestaan, zet dan "
+            f"deze stap kost er {cost}. Er is niets opgehaald. Wil je meer toestaan, zet dan "
             "SERPAPI_MONTHLY_LIMIT onder Secrets hoger."
         )
     return None

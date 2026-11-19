@@ -7,7 +7,9 @@ tested with fake fetches. Steps, as seen by the owner:
    fetched (Amazon blocks automated access); the owner is asked for the EAN instead.
 2. An *offers source* turns the EAN into a list of offers. Two exist: Beslist (`beslist_source`,
    pages fetched with `fetch`) and Google Shopping through SerpApi (`serp.serp_source`). A source
-   returns `Found` or `Failure`.
+   returns `Found`, `Failure` or `Choose`: Google Shopping cannot match a barcode exactly, so it
+   hands back candidate products and the owner picks one (`finish_choice` then fetches the
+   shops for that product).
 3. `choice.recommend` picks the offer to buy.
 
 Every failure ends in a status and a Dutch message that says what to do. A block (403, 429, a
@@ -18,6 +20,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -40,6 +43,7 @@ SOURCE_ERROR = "source_error"  # a paid API said no (bad key, no credits, ...)
 NOT_FOUND = "not_found"
 NO_OFFERS = "no_offers"
 MISMATCH = "mismatch"
+CHOOSE = "choose"  # the source found several products: the owner picks the one he means
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,21 @@ class Failure:
 
 
 @dataclass(frozen=True)
+class Choose:
+    """What an offers source returns when it found several products and cannot tell which one.
+
+    `finish(candidate, steps)` fetches the offers for the chosen candidate and returns `Found`
+    or `Failure`; it appends to `steps`.
+    """
+
+    candidates: tuple
+    source: str
+    finish: Callable
+    notes: tuple[str, ...] = ()
+    product_url: str | None = None  # where the owner can see all results at the source
+
+
+@dataclass(frozen=True)
 class LookupResult:
     status: str
     message: str  # Dutch, shown to the owner
@@ -80,6 +99,8 @@ class LookupResult:
     offers: tuple[Offer, ...] = ()
     recommendation: Recommendation | None = None
     read_at: datetime | None = None  # when the offers were read
+    candidates: tuple = ()  # status CHOOSE: the products to pick from
+    pending: Callable | None = None  # status CHOOSE: what `finish_choice` calls
 
     @property
     def worked(self):
@@ -211,7 +232,7 @@ def lookup(text, fetch, sleep=time.sleep, now=datetime.now, tolerance=TOLERANCE,
     """Run the chain for a bol link or a barcode. Always returns a LookupResult.
 
     `fetch` reads the bol page (and the Beslist pages when no other `source` is given). A
-    `source(ean, steps)` function returns `Found` or `Failure`; it defaults to Beslist.
+    `source(ean, steps)` function returns `Found`, `Failure` or `Choose`; it defaults to Beslist.
     """
     steps = []
     ean, child_gtins, early = _ean_from_input(text, fetch, steps)
@@ -219,15 +240,28 @@ def lookup(text, fetch, sleep=time.sleep, now=datetime.now, tolerance=TOLERANCE,
         return early
     source = source or beslist_source(fetch, sleep, now)
 
-    def result(status, message, **fields):
-        fields.setdefault("ean", ean)
-        fields.setdefault("child_gtins", child_gtins)
-        return LookupResult(status, message, steps=tuple(steps), **fields)
-
     found = source(ean, steps)
     if isinstance(found, Failure):
-        return result(found.status, found.message, source=found.source, product_url=found.product_url)
+        return _result(
+            steps, ean, child_gtins, found.status, found.message,
+            source=found.source, product_url=found.product_url,
+        )
+    if isinstance(found, Choose):
+        return _result(
+            steps, ean, child_gtins, CHOOSE, "Kies het product dat je bedoelt.",
+            source=found.source, product_url=found.product_url, notes=found.notes,
+            candidates=tuple(found.candidates), pending=found.finish,
+        )
+    return _from_found(found, steps, ean, child_gtins, tolerance)
 
+
+def _result(steps, ean, child_gtins, status, message, **fields):
+    fields.setdefault("ean", ean)
+    fields.setdefault("child_gtins", child_gtins)
+    return LookupResult(status, message, steps=tuple(steps), **fields)
+
+
+def _from_found(found, steps, ean, child_gtins, tolerance):
     fields = {
         "source": found.source,
         "product_url": found.product_url,
@@ -237,10 +271,24 @@ def lookup(text, fetch, sleep=time.sleep, now=datetime.now, tolerance=TOLERANCE,
         "notes": found.notes,
     }
     if not found.offers:
-        return result(NO_OFFERS, "Geen aanbiedingen gevonden.", **fields)
+        return _result(steps, ean, child_gtins, NO_OFFERS, "Geen aanbiedingen gevonden.", **fields)
 
     advice = recommend(found.offers, tolerance)
     fields.update(offers=tuple(found.offers), recommendation=advice)
     if advice is None:
-        return result(UNAVAILABLE, "Geen leverbaar aanbod.", **fields)
-    return result(OK, "Aanbiedingen gelezen.", **fields)
+        return _result(steps, ean, child_gtins, UNAVAILABLE, "Geen leverbaar aanbod.", **fields)
+    return _result(steps, ean, child_gtins, OK, "Aanbiedingen gelezen.", **fields)
+
+
+def finish_choice(result, candidate, tolerance=TOLERANCE):
+    """The owner picked `candidate` from a CHOOSE result: fetch its offers and recommend."""
+    steps = list(result.steps)
+    title = getattr(candidate, "title", None)
+    steps.append(f"Gekozen: {title if isinstance(title, str) else candidate}")
+    found = result.pending(candidate, steps)
+    if isinstance(found, Failure):
+        return _result(
+            steps, result.ean, result.child_gtins, found.status, found.message,
+            source=found.source or result.source, product_url=found.product_url,
+        )
+    return _from_found(found, steps, result.ean, result.child_gtins, tolerance)

@@ -129,19 +129,45 @@ def test_one_offer_per_shop_cheapest_total_wins():
     assert len(shop_offers) == 1 and shop_offers[0].total == 22.0
 
 
-def test_largest_product_group_is_used_and_the_others_are_reported():
-    fake = FakeSerp(
+OTHER = "Kérastase Gloss Absolu Masque 200 ml"
+
+
+def two_products():
+    return FakeSerp(
         shopping=[
+            item("C.nl", 15.0, product_id="222", title=OTHER, token="other"),
             item("A.nl", 38.0, product_id="111"),
             item("B.nl", 40.0, product_id="111"),
-            item("C.nl", 15.0, product_id="222", title="Kérastase Gloss Absolu Masque 200 ml", token="other"),
         ],
         stores=[],
     )
+
+
+def test_different_products_are_offered_to_choose_from_in_googles_order():
+    fake = two_products()
     result = run(fake)
-    assert {o.shop for o in result.offers} == {"A.nl", "B.nl"}
-    assert any("2 verschillende producten" in note for note in result.notes)
-    assert fake.calls[1]["page_token"] == TOKEN
+    assert result.status == lookup.CHOOSE
+    assert [c.title for c in result.candidates] == [OTHER, TITLE]
+    assert [c.shops for c in result.candidates] == [("C.nl",), ("A.nl", "B.nl")]
+    assert (result.candidates[1].price_min, result.candidates[1].price_max) == (38.0, 40.0)
+    assert [call["engine"] for call in fake.calls] == ["google_shopping"]  # nothing fetched yet
+    assert result.offers == ()
+
+
+def test_choosing_a_product_fetches_only_its_shops():
+    fake = two_products()
+    chosen = lookup.finish_choice(run(fake), run(fake).candidates[1])
+    assert chosen.status == lookup.OK
+    assert {o.shop for o in chosen.offers} == {"A.nl", "B.nl"}
+    assert fake.calls[-1]["page_token"] == TOKEN
+    assert not any("controleer de titel" in note.lower() for note in chosen.notes)  # he chose it himself
+
+
+def test_a_failing_second_step_after_choosing_is_a_failure_of_that_lookup():
+    fake = two_products()
+    other = run(fake).candidates[0]
+    result = lookup.finish_choice(run(fake), other)  # C.nl has an item but no store list
+    assert result.status == lookup.OK and {o.shop for o in result.offers} == {"C.nl"}
 
 
 def test_results_without_product_id_are_grouped_by_title():
@@ -152,7 +178,42 @@ def test_results_without_product_id_are_grouped_by_title():
             item("C.nl", 15.0, product_id=None, token=None, title="Iets anders"),
         ]
     )
-    assert {o.shop for o in run(fake).offers} == {"A.nl", "B.nl"}
+    result = run(fake)
+    assert result.status == lookup.CHOOSE
+    assert [c.shops for c in result.candidates] == [("A.nl", "B.nl"), ("C.nl",)]
+
+
+def test_a_single_product_is_used_straight_away_with_the_check_title_note():
+    result = run(FakeSerp(shopping=[item("A.nl", 38.0), item("B.nl", 40.0)], stores=[]))
+    assert result.status == lookup.OK
+    assert {o.shop for o in result.offers} == {"A.nl", "B.nl"}
+    assert any("titel" in note.lower() for note in result.notes)
+
+
+def test_the_product_name_ranks_candidates_and_a_clear_match_settles_the_choice():
+    fake = two_products()
+    source = serp.serp_source(fake, now=lambda: "NOW", hint="kerastase GLOSS absolu bain hydra-glaze shampoo")
+    result = lookup.lookup(EAN, None, source=source)
+    assert result.status == lookup.OK
+    assert {o.shop for o in result.offers} == {"A.nl", "B.nl"}
+    assert any("productnaam" in step for step in result.steps)
+
+
+def test_a_name_that_fits_several_products_equally_still_shows_the_list():
+    source = serp.serp_source(two_products(), now=lambda: "NOW", hint="kerastase gloss absolu")
+    result = lookup.lookup(EAN, None, source=source)
+    assert result.status == lookup.CHOOSE  # both titles have all three words: no clear winner
+    assert [c.title for c in result.candidates] == [OTHER, TITLE]  # a tie keeps Google's order
+
+
+def test_rank_puts_the_best_name_match_first_but_only_a_good_match_is_picked_automatically():
+    cands = serp.candidates(two_products().shopping["shopping_results"])
+    ranked = serp.rank(cands, "shampoo hydra glaze foo bar baz")  # 3 of 6 words: TITLE
+    assert [c.key for c in ranked] == ["111", "222"]
+    assert ranked[0].score == 0.5 and ranked[1].score == 0.0
+    assert serp.auto_pick(ranked, "shampoo hydra glaze foo bar baz") is None  # 0.5 < 0.75
+    assert serp.auto_pick(serp.rank(cands, "masque"), "masque").key == "222"
+    assert serp.auto_pick(serp.rank(cands, None), None) is None
 
 
 def test_dollar_prices_missing_prices_and_missing_shops_are_skipped():
@@ -227,7 +288,7 @@ def test_nothing_deliverable():
 
 def test_guard_reason_stops_before_any_search():
     fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)])
-    source = serp.serp_source(fake, now=lambda: "NOW", guard=lambda: "Maandbudget bereikt: 100 van 100")
+    source = serp.serp_source(fake, now=lambda: "NOW", guard=lambda cost: "Maandbudget bereikt: 100 van 100")
     result = lookup.lookup(EAN, None, source=source)
     assert result.status == lookup.SOURCE_ERROR
     assert result.message == "Maandbudget bereikt: 100 van 100"
@@ -238,7 +299,7 @@ def test_guard_reason_stops_before_any_search():
 
 def test_guard_that_says_none_lets_the_search_run():
     fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[store("Flaconi.nl", 38.63, shipping="Free")])
-    source = serp.serp_source(fake, now=lambda: "NOW", guard=lambda: None)
+    source = serp.serp_source(fake, now=lambda: "NOW", guard=lambda cost: None)
     assert lookup.lookup(EAN, None, source=source).status == lookup.OK
     assert [call["engine"] for call in fake.calls] == ["google_shopping", "google_immersive_product"]
 
@@ -293,16 +354,45 @@ def test_details_are_short_deduplicated_and_capped():
     fake = FakeSerp(
         shopping=[
             item(
-                "Flaconi.nl", 38.63, rating=9, extensions=["A", "a", "B", "C", "D"], snippet=long_text,
+                "Flaconi.nl", 38.63, rating=9, extensions=["A", "a", "B", "C", "D", "E", "F", "G"], snippet=long_text,
             )
         ],
         stores=[],
     )
     offer = run(fake).offers[0]
     assert "\u2605" not in "".join(offer.details)  # 9 is not a star rating
-    assert offer.details == ("A", "B", "C", "D")  # "a" repeats "A"; capped at four
+    assert offer.details == ("A", "B", "C", "D", "E", "F")  # "a" repeats "A"; capped at six
     only_long = run(FakeSerp(shopping=[item("Flaconi.nl", 38.63, snippet=long_text)], stores=[])).offers[0]
     assert len(only_long.details[0]) == 160 and only_long.details[0].endswith("\u2026")
+
+
+def test_the_guard_is_asked_for_the_whole_lookup_once_when_the_product_is_clear():
+    costs = []
+    fake = FakeSerp(shopping=[item("Flaconi.nl", 38.63)], stores=[store("Flaconi.nl", 38.63, shipping="Free")])
+    source = serp.serp_source(fake, now=lambda: "NOW", guard=lambda cost: costs.append(cost))
+    assert lookup.lookup(EAN, None, source=source).status == lookup.OK
+    assert costs == [2]
+
+
+def test_the_guard_is_asked_again_for_the_second_step_after_choosing():
+    costs = []
+    fake = two_products()
+    source = serp.serp_source(fake, now=lambda: "NOW", guard=lambda cost: costs.append(cost))
+    result = lookup.lookup(EAN, None, source=source)
+    assert costs == [2]
+    lookup.finish_choice(result, result.candidates[1])
+    assert costs == [2, 1]
+
+
+def test_a_guard_stopping_the_second_step_keeps_the_first_search_in_the_steps():
+    fake = two_products()
+    stop = {"now": False}
+    source = serp.serp_source(fake, now=lambda: "NOW", guard=lambda cost: "Op" if stop["now"] else None)
+    result = lookup.lookup(EAN, None, source=source)
+    stop["now"] = True
+    failed = lookup.finish_choice(result, result.candidates[1])
+    assert failed.status == lookup.SOURCE_ERROR and failed.message == "Op"
+    assert len(fake.calls) == 1  # the stores were not fetched
 
 
 def test_javascript_or_http_links_are_not_kept():

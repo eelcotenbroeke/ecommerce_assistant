@@ -4,6 +4,7 @@ from datetime import datetime
 import pytest
 
 import lookup
+from beslist import Offer
 from beslist_pages import EAN, PRODUCT_URL, ROWS, SEARCH_PAGE, SEARCH_URL, product_page
 
 BOL_URL = "https://www.bol.com/nl/nl/p/kerastase-gloss-absolu/9300000012345678/"
@@ -228,3 +229,51 @@ def test_tolerance_is_passed_to_the_recommendation():
     answers = {SEARCH_URL: (200, SEARCH_PAGE), PRODUCT_URL: (200, product_page(rows))}
     assert Net(answers).lookup(EAN).recommendation.pick.shop == "bol.com"
     assert Net(answers).lookup(EAN, tolerance=0.05).recommendation.pick.shop == "Flaconi.nl"
+
+
+# ------------------------------------------------------------------ a source that cannot tell which product
+
+
+def choose_source(finish):
+    def source(ean, steps):
+        steps.append("bron: 3 producten")
+        return lookup.Choose(("a", "b", "c"), "Bron", finish, notes=("let op",), product_url="https://bron.example/alles")
+
+    return source
+
+
+def test_a_source_that_cannot_decide_gives_a_choose_result_without_offers():
+    result = lookup.lookup(EAN, None, source=choose_source(lambda c, steps: None))
+    assert result.status == lookup.CHOOSE
+    assert not result.worked  # nothing to recommend yet
+    assert result.candidates == ("a", "b", "c")
+    assert result.ean == EAN and result.source == "Bron"
+    assert result.offers == () and result.recommendation is None
+    assert result.steps[-1] == "bron: 3 producten"
+
+
+def test_finish_choice_recommends_from_the_chosen_products_offers():
+    seen = []
+
+    def finish(candidate, steps):
+        seen.append(candidate)
+        steps.append("winkels gelezen")
+        return lookup.Found(
+            (Offer("Flaconi.nl", 38.63, 0.0, "1 dag", True, None), Offer("Celini.nl", 35.28, 3.95, None, True, None)),
+            "Bron", read_at=NOW, title="Gekozen product",
+        )
+
+    chosen = lookup.finish_choice(lookup.lookup(EAN, None, source=choose_source(finish)), "b")
+    assert seen == ["b"]
+    assert chosen.status == lookup.OK and chosen.worked
+    assert chosen.recommendation.pick.shop == "Flaconi.nl"
+    assert chosen.product_title == "Gekozen product" and chosen.ean == EAN
+    assert chosen.steps[-2:] == ("Gekozen: b", "winkels gelezen")
+    assert chosen.candidates == ()
+
+
+def test_finish_choice_passes_a_failure_on_with_its_message():
+    failure = lookup.Failure(lookup.SOURCE_ERROR, "Maandbudget bereikt", "Bron")
+    chosen = lookup.finish_choice(lookup.lookup(EAN, None, source=choose_source(lambda c, s: failure)), "a")
+    assert (chosen.status, chosen.message, chosen.source) == (lookup.SOURCE_ERROR, "Maandbudget bereikt", "Bron")
+    assert not chosen.worked and chosen.offers == ()

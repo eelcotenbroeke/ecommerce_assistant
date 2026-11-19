@@ -23,9 +23,11 @@ def _pct(value):
 
 
 def severity(result):
-    """'success', 'warning' or 'error': how loudly to show the message."""
+    """'success', 'info', 'warning' or 'error': how loudly to show the message."""
     if result.status == lookup.OK:
         return "success"
+    if result.status == lookup.CHOOSE:
+        return "info"
     if result.status in (lookup.BLOCKED, lookup.MISMATCH, lookup.SOURCE_ERROR):
         return "error"
     return "warning"
@@ -168,3 +170,35 @@ def offer_cards(result):
             )
         )
     return cards
+
+
+CHOOSE_INTRO = (
+    "Google Shopping zoekt niet exact op de EAN en gaf deze producten terug. Tik op het product "
+    "dat je bedoelt: dan haal ik de winkels op (1 zoekopdracht)."
+)
+
+
+@dataclass(frozen=True)
+class CandidateCard:
+    """One product Google found, as a block to pick from on the phone screen."""
+
+    title: str
+    line: str  # shops and price range
+    thumbnail: str | None
+
+
+def candidate_line(candidate):
+    """'2 winkels \u00b7 \u20ac 4,69 \u2013 \u20ac 12,03' (or '1 winkel \u00b7 \u20ac 35,28')."""
+    count = len(candidate.shops)
+    parts = [f"{count} winkel" + ("" if count == 1 else "s")] if count else []
+    low, high = candidate.price_min, candidate.price_max
+    if low is not None:
+        parts.append(eur(low) if high is None or abs(high - low) < 0.005 else f"{eur(low)} \u2013 {eur(high)}")
+    return " \u00b7 ".join(parts)
+
+
+def candidate_cards(result):
+    """The candidate products of a CHOOSE result, in the order to show them."""
+    return [
+        CandidateCard(c.title, candidate_line(c), _web_link(c.thumbnail)) for c in result.candidates
+    ]

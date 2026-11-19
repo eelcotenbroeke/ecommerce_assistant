@@ -30,6 +30,7 @@ def test_eur(value, expected):
     "status, expected",
     [
         (lookup.OK, "success"),
+        (lookup.CHOOSE, "info"),
         (lookup.UNAVAILABLE, "warning"),
         (lookup.NEEDS_EAN, "warning"),
         (lookup.NOT_FOUND, "warning"),
@@ -158,3 +159,24 @@ def test_product_link_label_follows_the_source():
     assert view.product_link_label(result(source="Google Shopping")) == "Bekijk op Google Shopping"
     assert view.product_link_label(result(source="Beslist")) == "Bekijk op Beslist"
     assert view.product_link_label(result()) == "Bekijk product"
+
+
+def test_candidate_cards_show_shops_and_price_range():
+    import serp
+
+    def cand(key, shops, low, high, thumbnail=None):
+        return serp.Candidate(key, f"Product {key}", "tok", thumbnail, shops, low, high, None, 0)
+
+    cands = (
+        cand("1", ("A.nl",), 35.28, 35.28, "https://img.example/1.jpg"),
+        cand("2", ("A.nl", "B.nl"), 4.69, 12.03, "javascript:alert(1)"),
+        cand("3", (), None, None),
+    )
+    cards = view.candidate_cards(result(lookup.CHOOSE, candidates=cands))
+    assert [c.title for c in cards] == ["Product 1", "Product 2", "Product 3"]
+    assert [c.line for c in cards] == [
+        "1 winkel \u00b7 \u20ac 35,28",
+        "2 winkels \u00b7 \u20ac 4,69 \u2013 \u20ac 12,03",
+        "",
+    ]
+    assert [c.thumbnail for c in cards] == ["https://img.example/1.jpg", None, None]
