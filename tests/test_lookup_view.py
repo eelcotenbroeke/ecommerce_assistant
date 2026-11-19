@@ -244,15 +244,14 @@ def test_the_ten_percent_rule_works_among_the_visible_shops_only():
     assert shown.recommendation.cheapest.shop == "Kruidvat.nl"
 
 
-def test_no_member_with_a_deliverable_offer_is_a_warning_with_a_clear_message():
+def test_no_member_with_a_deliverable_offer_shows_every_shop_with_a_note():
     res = result(offers=[offer("Celini.nl", 30.0), offer("Flaconi.nl", 31.0), offer("Kruidvat.nl", 33.0, deliverable=False)])
     shown, hidden = view.apply_member_filter(res, LIST)
-    assert hidden == 2 and shops(shown) == ["Kruidvat.nl"]
-    assert shown.recommendation is None and shown.status == lookup.UNAVAILABLE
-    assert shown.message == view.NO_MEMBER_OFFER
-    assert view.severity(shown) == "warning" and view.headline(shown) is None
+    assert hidden == 0 and shops(shown) == ["Celini.nl", "Flaconi.nl", "Kruidvat.nl"]
+    assert shown.recommendation == res.recommendation and shown.status == lookup.OK
+    assert shown.notes[0] == view.NO_MEMBER_NOTE
     nothing, hidden = view.apply_member_filter(result(offers=[offer("Celini.nl", 30.0)]), LIST)
-    assert shops(nothing) == [] and hidden == 1 and nothing.message == view.NO_MEMBER_OFFER
+    assert shops(nothing) == ["Celini.nl"] and hidden == 0 and nothing.notes[0] == view.NO_MEMBER_NOTE
 
 
 def test_a_result_that_was_already_undeliverable_keeps_its_own_message():
