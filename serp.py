@@ -363,6 +363,20 @@ def similarity(hint, title):
     return len(wanted & set(_words(title))) / len(wanted)
 
 
+def ranking_text(*texts):
+    """The words of all `texts` once each, in order: what the candidates are ranked on. The owner's
+    typed name and the words of his link say different things about one product ("eyeliner" against
+    "011 rosy sculpt"); a title that fits both is the product, one that fits only the generic part
+    is a sibling. None when there is no word at all."""
+    seen, words = set(), []
+    for text in texts:
+        for word in _words(text):
+            if word not in seen:
+                seen.add(word)
+                words.append(word)
+    return " ".join(words) or None
+
+
 def rank(cands, hint=None):
     """Best match with the owner's product name first, otherwise Google's own order."""
     scored = [replace(c, score=similarity(hint, c.title)) for c in cands]
@@ -482,11 +496,9 @@ def serp_source(fetch_json, now=datetime.now, guard=None, hint=None):
     name = _clip(hint, MAX_QUERY_CHARS) if hint and hint.strip() else None
 
     def source(ean, steps, page_name=None):
-        rank_hint = hint
-        if not name and ean is None:
-            if not page_name:
-                return Failure(NEEDS_EAN, NO_EAN_ON_AMAZON)
-            rank_hint = page_name
+        if not name and ean is None and not page_name:
+            return Failure(NEEDS_EAN, NO_EAN_ON_AMAZON)
+        rank_hint = ranking_text(hint, page_name)
         # With the owner's product name Google is asked for that name: Google does not search
         # on the barcode itself (for one real EAN it gave 40 loosely related products, for
         # another nothing at all), so the name is the more reliable question.

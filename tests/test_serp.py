@@ -787,3 +787,63 @@ def test_the_budget_is_asked_before_the_second_try():
     result = lookup.lookup("", None, source=source, by_name=True)
     assert asked == [2, 2] and result.status == lookup.SOURCE_ERROR and result.message == "Maandbudget bereikt"
     assert len(fake.calls) == 1 and "Kortere zoekterm: niet gezocht (budget)" in result.steps
+
+
+# ------------------------------------------------------------------ typed name and link words together
+# live case 2026-11-22: the typed name "Maybelline Sculpting Stix eyeliner" fits every Stix product,
+# the words of the Kruidvat link ("011 rosy sculpt ...") say which one
+
+TYPED = "Maybelline Sculpting Stix eyeliner"
+SHADE_011 = "Maybelline New York Sculpting Stix 011 Rosy Sculpt 2-in-1 Eyeliner"
+SHADE_015 = "Maybelline New York Sculpting Stix Eyeliner - 015 Smooth Espresso"
+SET_OF_6 = "Maybelline Sculpting Stix Eyeliner - Set van 6 - Voordeelverpakking"
+THREE_PACK = "MAYBELLINE Sculpting Stix 015 Smooth Espresso 3 stuks"
+OTHER_LINE = "Maybelline Color Tattoo Eye Stix I am Determined"
+
+
+def stix_products(*titles):
+    return [item(f"Shop{i}.nl", 10.0 + i, product_id=str(i), title=title) for i, title in enumerate(titles)]
+
+
+def test_ranking_text_has_every_word_once_in_order():
+    assert serp.ranking_text("Kérastase Gloss", "gloss absolu 2-in-1") == "kerastase gloss absolu 2 in 1"
+    assert serp.ranking_text("  ", None) is None
+    assert serp.ranking_text(None, "maybelline stix") == "maybelline stix"
+
+
+def test_the_link_words_decide_between_shades_the_typed_name_cannot_tell_apart():
+    cands = serp.candidates(stix_products(SET_OF_6, OTHER_LINE, THREE_PACK, SHADE_015, SHADE_011))
+    typed_only = serp.rank(cands, serp.ranking_text(TYPED))
+    assert serp.auto_pick(typed_only, serp.ranking_text(TYPED)) is None  # "eyeliner" fits all of them
+    both = serp.ranking_text(TYPED, LONG_NAME)
+    ranked = serp.rank(cands, both)
+    assert [c.title for c in ranked][:2] == [SHADE_011, SHADE_015]
+    assert ranked[0].score == 1.0 and ranked[1].score == 0.5
+    assert serp.auto_pick(ranked, both).title == SHADE_011
+
+
+def test_a_typed_name_with_the_words_of_the_link_goes_straight_to_the_shops():
+    fake = FakeSerp(
+        shopping=stix_products(SET_OF_6, OTHER_LINE, THREE_PACK, SHADE_015, SHADE_011),
+        stores=[store("Kruidvat.nl", 10.99, shipping_extracted=0.0)],
+    )
+    steps = []
+    found = serp.serp_source(fake, now=lambda: "NOW", hint=TYPED)(None, steps, page_name=LONG_NAME)
+    assert isinstance(found, lookup.Found)
+    assert [c["q"] for c in fake.calls if c["engine"] == "google_shopping"] == [TYPED]  # his name is asked
+    assert "Product gekozen op je productnaam" in steps
+
+
+def test_without_the_product_with_that_shade_the_list_is_ranked_on_both():
+    fake = FakeSerp(shopping=stix_products(SET_OF_6, OTHER_LINE, THREE_PACK, SHADE_015))
+    choose = serp.serp_source(fake, now=lambda: "NOW", hint=TYPED)(None, [], page_name=LONG_NAME)
+    assert isinstance(choose, lookup.Choose)
+    assert [c.title for c in choose.candidates] == [SHADE_015, SET_OF_6, THREE_PACK, OTHER_LINE]
+
+
+def test_a_link_without_a_typed_name_ranks_on_the_link_words_alone():
+    fake = FakeSerp(shopping=stix_products(SET_OF_6, SHADE_011))
+    source = serp.serp_source(fake, now=lambda: "NOW")
+    found = source(None, [], page_name=LONG_NAME)
+    assert isinstance(found, lookup.Found)  # the long slug names the product word for word
+    assert fake.calls[0]["q"] == LONG_NAME

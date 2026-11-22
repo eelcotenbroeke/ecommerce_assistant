@@ -405,8 +405,30 @@ def candidate_line(candidate):
     return " \u00b7 ".join(parts)
 
 
+CLOSE_FLOOR = 0.5  # a title must have at least this share of the wanted words to count as close
+CLOSE_MARGIN = 0.25  # ... and be within this distance of the best title
+CLOSE_FALLBACK = 5  # when nothing reaches the floor: the best few, so the list is never empty
+
+
+def close_count(candidates):
+    """How many of the ranked `candidates` (best first) are close to what was asked for: those
+    within `CLOSE_MARGIN` of the best score and at least `CLOSE_FLOOR`; when none reaches the floor
+    the best `CLOSE_FALLBACK`. Without a name to compare with (all scores 0) every one is shown."""
+    scores = [c.score for c in candidates]
+    best = max(scores, default=0.0)
+    if best <= 0:
+        return len(scores)
+    floor = max(CLOSE_FLOOR, best - CLOSE_MARGIN) - 1e-9
+    close = sum(1 for score in scores if score >= floor)
+    return close or min(CLOSE_FALLBACK, len(scores))
+
+
 def candidate_cards(result):
     """The candidate products of a CHOOSE result, in the order to show them."""
     return [
         CandidateCard(c.title, candidate_line(c), _web_link(c.thumbnail)) for c in result.candidates
     ]
+
+
+OTHER_RESULTS = "Andere resultaten ({})"
+OTHER_RESULTS_NOTE = "Deze producten lijken minder op je zoekterm. Staat jouw product er tussen, tik het dan hier aan."

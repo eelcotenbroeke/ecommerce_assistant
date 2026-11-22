@@ -354,3 +354,32 @@ def test_the_headline_box_is_redundant_only_when_the_verdict_names_the_same_shop
     assert not view.headline_is_redundant(None)
     preferred = result(offers=[offer("Kruidvat.nl", 45.0), offer("Etos", 40.0), offer("bol.com", 42.0)], reference_link="https://www.kruidvat.nl/p/shampoo-test/1")
     assert not view.headline_is_redundant(view.verdict_for(preferred, preferred))  # the pick is bol, not the cheapest
+
+
+# ------------------------------------------------------------------ only the close products are listed
+
+
+class Scored:
+    def __init__(self, score):
+        self.score = score
+
+
+@pytest.mark.parametrize(
+    "scores, expected",
+    [
+        ([1.0, 0.9, 0.7, 0.3], 2),  # within 0.25 of the best: floor 0.75
+        ([0.75, 0.5, 0.5, 0.25], 3),  # the floor is 0.5 however low the best is
+        ([0.6, 0.5, 0.2], 2),
+        ([0.4, 0.3, 0.2], 3),  # nothing reaches 0.5: the best few, never an empty list
+        ([0.4, 0.35, 0.3, 0.2, 0.1, 0.05, 0.0], 5),
+        ([0.0, 0.0, 0.0], 3),  # no name to compare with: everything is shown
+        ([1.0], 1),
+        ([], 0),
+    ],
+)
+def test_close_count(scores, expected):
+    assert view.close_count([Scored(s) for s in scores]) == expected
+
+
+def test_a_score_a_hair_under_the_margin_still_counts_as_close():
+    assert view.close_count([Scored(1.0), Scored(0.75 - 1e-12), Scored(0.2)]) == 2
