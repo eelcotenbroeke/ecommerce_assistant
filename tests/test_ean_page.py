@@ -1204,3 +1204,82 @@ def test_the_verdict_and_the_headline_box_do_not_say_the_same_twice(network):
     search_maybelline(at)
     assert not at.success  # no second green box for Etos: the verdict says it
     assert "De goedkoopste leverbare optie, inclusief verzending." not in texts(at.markdown)
+
+
+# ------------------------------------------------------------------ only close products are listed (2026-11-22)
+
+SHADE_011 = "Maybelline New York Sculpting Stix 011 Rosy Sculpt 2-in-1 Eyeliner"
+SHADE_011_PLAIN = "Maybelline New York Sculpting Stix Eyeliner 011 Rosy Sculpt"
+SHADE_015 = "Maybelline New York Sculpting Stix Eyeliner - 015 Smooth Espresso"
+SET_OF_6 = "Maybelline Sculpting Stix Eyeliner - Set van 6 - Voordeelverpakking"
+THREE_PACK = "MAYBELLINE Sculpting Stix 015 Smooth Espresso 3 stuks"
+OTHER_LINE = "Maybelline Color Tattoo Eye Stix I am Determined"
+
+
+def stix(network, *titles):
+    """Google answers with one product per title (in this order); every product has one shop."""
+    network.serp_answers["google_shopping"] = (
+        200,
+        json.dumps(
+            {
+                "shopping_results": [
+                    item(f"Shop{i}.nl", 10.0 + i, product_id=str(i), title=title) for i, title in enumerate(titles)
+                ]
+            }
+        ),
+    )
+    network.serp_answers["google_immersive_product"] = (
+        200,
+        json.dumps({"product_results": {"stores": [store("Kruidvat.nl", 10.99, title=SHADE_011, shipping_extracted=0.0)]}}),
+    )
+
+
+def fold_labels(at):
+    return [e.label for e in at.expander if e.label.startswith("Andere resultaten")]
+
+
+def test_the_product_the_link_and_name_describe_is_picked_without_a_list(network):
+    stix(network, SET_OF_6, OTHER_LINE, THREE_PACK, SHADE_015, SHADE_011)
+    at = start(KEY)
+    search_maybelline(at)
+    assert not at.exception
+    assert pick_buttons(at) == [] and fold_labels(at) == []
+    assert len(serp_calls(network)) == 2  # the list and the shops of the picked product
+    assert listed_shops(at)[0] == "Kruidvat.nl"
+
+
+def test_a_list_shows_the_close_products_and_folds_the_rest(network):
+    stix(network, SET_OF_6, OTHER_LINE, THREE_PACK, SHADE_015, SHADE_011_PLAIN)
+    at = start(KEY)
+    search_maybelline(at)
+    assert not at.exception
+    fold = next(e for e in at.expander if e.label.startswith("Andere resultaten"))
+    folded = [m.value for m in fold.markdown if m.value.startswith("**")]
+    assert folded == [f"**{SET_OF_6}**", f"**{THREE_PACK}**", f"**{OTHER_LINE}**"]
+    titles = [m.value for m in at.markdown if m.value.startswith("**") and m.value.endswith("**")]
+    # shade 011 without "2-in-1" (9 of 12 words) and the 015 shade (6 of 12) are close, the rest is not
+    assert [t for t in titles if t not in folded and "aybelline" in t.lower()] == [
+        f"**{SHADE_011_PLAIN}**",
+        f"**{SHADE_015}**",
+    ]
+    assert fold_labels(at) == ["Andere resultaten (3)"]
+    assert pick_buttons(at) == [f"ean_pick_{i}" for i in range(5)]  # the folded ones can still be tapped
+    assert len(serp_calls(network)) == 1
+
+
+def test_a_product_from_the_fold_can_be_picked(network):
+    stix(network, SET_OF_6, OTHER_LINE, THREE_PACK, SHADE_015, SHADE_011_PLAIN)
+    at = start(KEY)
+    search_maybelline(at)
+    at.button(key="ean_pick_2").click().run()  # third in the ranking: the set of six, in the fold
+    assert not at.exception
+    assert len(serp_calls(network)) == 2
+    assert f"Product volgens Google Shopping: **{SET_OF_6}**" in texts(at.markdown)
+
+
+def test_without_a_name_to_compare_with_every_product_is_listed(network):
+    stix(network, SET_OF_6, OTHER_LINE, THREE_PACK)
+    at = start(KEY)
+    search(at)  # a bare EAN: nothing to rank on
+    assert pick_buttons(at) == ["ean_pick_0", "ean_pick_1", "ean_pick_2"]
+    assert fold_labels(at) == []

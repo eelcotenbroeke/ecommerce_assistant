@@ -200,17 +200,29 @@ def _offer_block(card):
             st.caption("Geen directe link: gebruik de knop met het product hieronder.")
 
 
+def _candidate_block(index, card):
+    with st.container(border=True):
+        picture, text = st.columns([1, 3])
+        if card.thumbnail:
+            picture.image(card.thumbnail, width=72)
+        text.markdown(f"**{card.title}**")
+        if card.line:
+            text.caption(card.line)
+        text.button("Dit is mijn product", key=f"ean_pick_{index}", on_click=_ask_pick, args=(index,))
+
+
 def _show_candidates(result):
     st.info(lookup_view.choose_intro(result))
-    for index, card in enumerate(lookup_view.candidate_cards(result)):
-        with st.container(border=True):
-            picture, text = st.columns([1, 3])
-            if card.thumbnail:
-                picture.image(card.thumbnail, width=72)
-            text.markdown(f"**{card.title}**")
-            if card.line:
-                text.caption(card.line)
-            text.button("Dit is mijn product", key=f"ean_pick_{index}", on_click=_ask_pick, args=(index,))
+    cards = lookup_view.candidate_cards(result)
+    close = lookup_view.close_count(result.candidates)
+    for index, card in enumerate(cards[:close]):
+        _candidate_block(index, card)
+    if close < len(cards):
+        # the indexes stay those of the full list: `_choose` looks the product up there
+        with st.expander(lookup_view.OTHER_RESULTS.format(len(cards) - close)):
+            st.caption(lookup_view.OTHER_RESULTS_NOTE)
+            for index in range(close, len(cards)):
+                _candidate_block(index, cards[index])
     if result.product_url:
         st.link_button("Bekijk alle resultaten op Google Shopping", result.product_url)
     with st.expander("Stappen"):
